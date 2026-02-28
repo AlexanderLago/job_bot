@@ -24,6 +24,16 @@ PROVIDERS = [
         "signup_url": "https://aistudio.google.com/app/apikey",
     },
     {
+        "id": "gemini15",
+        "label": "Gemini 1.5 Flash",
+        "key_name": "GEMINI_API_KEY",          # same key, separate rate limit pool
+        "type": "oai",
+        "base_url": "https://generativelanguage.googleapis.com/v1beta/openai/",
+        "model": "gemini-1.5-flash",
+        "free": True,
+        "signup_url": "https://aistudio.google.com/app/apikey",
+    },
+    {
         "id": "groq",
         "label": "Llama 3.3 70B · Groq",
         "key_name": "GROQ_API_KEY",
