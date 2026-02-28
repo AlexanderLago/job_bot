@@ -157,13 +157,12 @@ with st.sidebar:
     st.divider()
 
     # ── Provider / API key auto-detection ─────────────────────────────────────
-    # Gemini key is hardcoded (it's already public on GitHub).
-    # Anthropic key is read from secrets only — never hardcoded.
-    _GEMINI_KEY = "AIzaSyBDOS8Jesq_enl-VdV4zVtJd2xJRorA7eI"
-
-    _ant_key = ""
+    # Keys are read from Streamlit secrets (never hardcoded).
+    # Locally: .streamlit/secrets.toml   |   Hosted: Streamlit Cloud secrets vault
+    _ant_key, _gem_key = "", ""
     try:
         _ant_key = st.secrets.get("ANTHROPIC_API_KEY", "") or ""
+        _gem_key = st.secrets.get("GEMINI_API_KEY", "") or ""
     except Exception:
         pass
 
@@ -172,11 +171,16 @@ with st.sidebar:
         api_key = _ant_key
         st.markdown("**🤖 AI Provider**")
         st.success("Claude (Anthropic)")
-    else:
+    elif _gem_key:
         provider = "gemini"
-        api_key = _GEMINI_KEY
+        api_key = _gem_key
         st.markdown("**🤖 AI Provider**")
         st.success("Gemini (Google)")
+    else:
+        provider = "gemini"
+        api_key = ""
+        st.markdown("**🤖 AI Provider**")
+        st.warning("No API key configured. Add GEMINI_API_KEY to Streamlit secrets.")
 
     st.divider()
 
