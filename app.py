@@ -157,6 +157,8 @@ with st.sidebar:
     st.divider()
 
     # ── Provider / API key auto-detection ─────────────────────────────────────
+    _DEFAULT_GEMINI_KEY = "AIzaSyAlEuUi0f3KqtxRiNH5n09cVTJN2eQKwHg"
+
     _ant_key, _gem_key = "", ""
     try:
         _ant_key = st.secrets.get("ANTHROPIC_API_KEY", "") or ""
@@ -164,39 +166,20 @@ with st.sidebar:
     except Exception:
         pass
 
+    # Fall back to hardcoded default if no secrets configured
+    if not _gem_key:
+        _gem_key = _DEFAULT_GEMINI_KEY
+
     if _ant_key:
         provider = "anthropic"
         api_key = _ant_key
         st.markdown("**🤖 AI Provider**")
-        st.success("Claude (Anthropic) — from secrets")
-    elif _gem_key:
+        st.success("Claude (Anthropic)")
+    else:
         provider = "gemini"
         api_key = _gem_key
         st.markdown("**🤖 AI Provider**")
-        st.success("Gemini (Google) — from secrets")
-    else:
-        st.markdown("**🤖 AI Provider**")
-        _provider_choice = st.radio(
-            "Provider",
-            ["Gemini — Google (free)", "Claude — Anthropic (paid)"],
-            label_visibility="collapsed",
-        )
-        if "Gemini" in _provider_choice:
-            provider = "gemini"
-            api_key = st.text_input(
-                "Gemini API Key",
-                type="password",
-                placeholder="AIzaSy...",
-                help="Free at aistudio.google.com/app/apikey",
-            )
-        else:
-            provider = "anthropic"
-            api_key = st.text_input(
-                "Anthropic API Key",
-                type="password",
-                placeholder="sk-ant-...",
-                help="Get one at console.anthropic.com",
-            )
+        st.success("Gemini (Google)")
 
     st.divider()
 
