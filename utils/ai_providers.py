@@ -17,7 +17,7 @@ PROVIDERS = [
     },
     {
         "id": "gemini",
-        "label": "Gemini 2.0 Flash",
+        "label": "Gemini 3 Flash Preview",
         "key_name": "GEMINI_API_KEY",
         "type": "gemini",
         "free": True,
@@ -29,7 +29,7 @@ PROVIDERS = [
         "key_name": "GEMINI_API_KEY",          # same key, separate rate limit pool
         "type": "oai",
         "base_url": "https://generativelanguage.googleapis.com/v1beta/openai/",
-        "model": "gemini-1.5-flash",
+        "model": "gemini-1.5-flash-002",
         "free": True,
         "signup_url": "https://aistudio.google.com/app/apikey",
     },
