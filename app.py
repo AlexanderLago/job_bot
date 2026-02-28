@@ -451,9 +451,19 @@ with tab_tailor:
                         temperature=temperature,
                     )
             except Exception as e:
-                st.error(f"AI error: {e}")
-                with st.expander("Debug info"):
-                    st.code(traceback.format_exc())
+                err_str = str(e)
+                if "RESOURCE_EXHAUSTED" in err_str or "429" in err_str or "quota" in err_str.lower():
+                    st.error(
+                        "**Gemini free tier quota exceeded.** "
+                        "This usually means the model isn't available on your project's free tier. "
+                        "Try again in a few minutes, or visit "
+                        "[Google AI Studio](https://aistudio.google.com/app/apikey) to create a "
+                        "fresh API key in a new project."
+                    )
+                else:
+                    st.error(f"AI error: {e}")
+                    with st.expander("Debug info"):
+                        st.code(traceback.format_exc())
                 st.stop()
 
         company = resume_data.get("name", "")  # We'll get company from job later
