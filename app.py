@@ -8,10 +8,7 @@ from pathlib import Path
 import streamlit as st
 
 from utils.resume_parser import parse_resume
-from utils.ai_tailor import tailor_resume
-from utils.gemini_tailor import tailor_resume_gemini
-from utils.scorer import score_resume
-from utils.gemini_scorer import score_resume_gemini
+from utils.ai_providers import PROVIDERS, call_tailor, call_score, ProviderRateLimitError
 from utils.docx_builder import build_docx
 from utils.pdf_builder import build_pdf
 from utils.job_scraper import scrape_job_url
@@ -133,6 +130,8 @@ if "last_score" not in st.session_state:
     st.session_state.last_score = None
 if "tailor_result" not in st.session_state:
     st.session_state.tailor_result = None
+if "rate_limited_providers" not in st.session_state:
+    st.session_state.rate_limited_providers = set()
 
 # ── Load persisted state from disk (runs once per session) ───────────────────
 if "fs_loaded" not in st.session_state:
@@ -233,6 +232,22 @@ def _condense_resume(data: dict) -> dict:
     return d
 
 
+def _call_with_fallback(fn, available, all_keys, preferred_cfg, *args):
+    """Try preferred provider, then cycle through available on rate limit.
+    Returns (result, used_provider_cfg). Raises RuntimeError if all exhausted."""
+    order = [preferred_cfg] + [p for p in available if p["id"] != preferred_cfg["id"]]
+    for p in order:
+        key = all_keys.get(p["id"], "")
+        if not key:
+            continue
+        try:
+            return fn(p, key, *args), p
+        except ProviderRateLimitError:
+            st.session_state.rate_limited_providers.add(p["id"])
+            st.toast(f"⚠️ {p['label']} rate limited — trying next provider...")
+    raise RuntimeError("All configured providers are rate limited. Wait a moment and try again.")
+
+
 def _score_color(score: int) -> str:
     if score >= 85:
         return "#22C55E"   # green
@@ -291,31 +306,60 @@ with st.sidebar:
 
     st.divider()
 
-    # ── Provider / API key auto-detection ─────────────────────────────────────
-    # Keys are read from Streamlit secrets (never hardcoded).
-    # Locally: .streamlit/secrets.toml   |   Hosted: Streamlit Cloud secrets vault
-    _ant_key, _gem_key = "", ""
-    try:
-        _ant_key = st.secrets.get("ANTHROPIC_API_KEY", "") or ""
-        _gem_key = st.secrets.get("GEMINI_API_KEY", "") or ""
-    except Exception:
-        pass
+    # ── AI Model selector ──────────────────────────────────────────────────────
+    # Reads all provider keys from Streamlit secrets. Shows only configured ones
+    # as selectable options; lists unconfigured ones with signup links.
+    _all_keys = {}
+    for _p in PROVIDERS:
+        try:
+            _all_keys[_p["id"]] = st.secrets.get(_p["key_name"], "") or ""
+        except Exception:
+            _all_keys[_p["id"]] = ""
 
-    if _ant_key:
-        provider = "anthropic"
-        api_key = _ant_key
-        st.markdown("**🤖 AI Provider**")
-        st.success("Claude (Anthropic)")
-    elif _gem_key:
-        provider = "gemini"
-        api_key = _gem_key
-        st.markdown("**🤖 AI Provider**")
-        st.success("Gemini (Google)")
-    else:
-        provider = "gemini"
+    _available = [_p for _p in PROVIDERS if _all_keys.get(_p["id"])]
+    _rl = st.session_state.rate_limited_providers
+
+    st.markdown("**🤖 AI Model**")
+
+    if not _available:
+        st.warning("No API keys configured. Add at least one key to `.streamlit/secrets.toml`.")
+        _selected_cfg = None
+        provider = ""
         api_key = ""
-        st.markdown("**🤖 AI Provider**")
-        st.warning("No API key configured. Add GEMINI_API_KEY to Streamlit secrets.")
+    else:
+        _radio_ids = ["auto"] + [_p["id"] for _p in _available]
+        _radio_labels = {"auto": "🔄 Auto (cycle on rate limit)"}
+        for _p in _available:
+            _badge = " ⚠️ rate limited" if _p["id"] in _rl else " ✅"
+            _radio_labels[_p["id"]] = _p["label"] + _badge
+
+        _selected_id = st.radio(
+            "model_select",
+            _radio_ids,
+            format_func=lambda x: _radio_labels[x],
+            index=0,
+            label_visibility="collapsed",
+        )
+
+        if _selected_id == "auto":
+            # Pick first non-rate-limited available provider
+            _selected_cfg = next(
+                (_p for _p in _available if _p["id"] not in _rl),
+                _available[0],
+            )
+        else:
+            _selected_cfg = next(_p for _p in PROVIDERS if _p["id"] == _selected_id)
+
+        provider = _selected_cfg["id"]
+        api_key = _all_keys.get(provider, "")
+
+    # Unconfigured providers — show signup links
+    _missing = [_p for _p in PROVIDERS if not _all_keys.get(_p["id"])]
+    if _missing:
+        with st.expander(f"➕ Add {len(_missing)} more free provider{'s' if len(_missing) != 1 else ''}"):
+            for _p in _missing:
+                _tag = " (free)" if _p.get("free") else ""
+                st.markdown(f"**{_p['label']}**{_tag}  \n[Get API key]({_p['signup_url']})")
 
     st.divider()
 
@@ -489,13 +533,18 @@ with tab_tailor:
         else:
             with st.spinner("Scoring your resume fit..."):
                 try:
-                    if provider == "anthropic":
-                        result = score_resume(active_resume, job_description, api_key)
-                    else:
-                        result = score_resume_gemini(active_resume, job_description, api_key)
+                    result, used = _call_with_fallback(
+                        call_score, _available, _all_keys, _selected_cfg,
+                        active_resume, job_description,
+                    )
+                    if used["id"] != provider:
+                        st.info(f"Switched to {used['label']} (primary was rate limited)")
                     st.session_state.last_score = result
+                except RuntimeError as e:
+                    st.error(str(e))
+                    st.session_state.last_score = None
                 except Exception as e:
-                    st.error(f"Scoring error (raw): {str(e)[:600]}")
+                    st.error(f"Scoring error: {str(e)[:600]}")
                     st.session_state.last_score = None
 
     # Show score card if we have a result
@@ -563,32 +612,23 @@ with tab_tailor:
             st.error("Could not extract any text from your resume. Try a .docx or .txt file.")
             st.stop()
 
-        # Call AI provider
-        provider_label = "Claude" if provider == "anthropic" else "Gemini"
-        with st.spinner(f"Tailoring your resume with {provider_label} — this takes 15–30 seconds..."):
+        # Call AI provider (with automatic fallback on rate limit)
+        _provider_label = _selected_cfg["label"] if _selected_cfg else "AI"
+        with st.spinner(f"Tailoring your resume with {_provider_label} — this takes 15–30 seconds..."):
             try:
-                if provider == "anthropic":
-                    resume_data = tailor_resume(
-                        resume_text=resume_text,
-                        job_description=job_description,
-                        api_key=api_key,
-                        temperature=temperature,
-                    )
-                else:
-                    resume_data = tailor_resume_gemini(
-                        resume_text=resume_text,
-                        job_description=job_description,
-                        api_key=api_key,
-                        temperature=temperature,
-                    )
+                resume_data, used = _call_with_fallback(
+                    call_tailor, _available, _all_keys, _selected_cfg,
+                    resume_text, job_description, temperature,
+                )
+                if used["id"] != provider:
+                    st.info(f"Switched to {used['label']} (primary was rate limited)")
+            except RuntimeError as e:
+                st.error(str(e))
+                st.stop()
             except Exception as e:
-                err_str = str(e)
-                if "RESOURCE_EXHAUSTED" in err_str or "429" in err_str or "quota" in err_str.lower():
-                    st.error(f"**Gemini quota error.** Raw details: {err_str[:600]}")
-                else:
-                    st.error(f"AI error: {e}")
-                    with st.expander("Debug info"):
-                        st.code(traceback.format_exc())
+                st.error(f"AI error: {e}")
+                with st.expander("Debug info"):
+                    st.code(traceback.format_exc())
                 st.stop()
 
         resume_data = _condense_resume(resume_data)
