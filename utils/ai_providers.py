@@ -63,6 +63,16 @@ PROVIDERS = [
         "free": True,
         "signup_url": "https://openrouter.ai/keys",
     },
+    {
+        "id": "zhipu",
+        "label": "GLM-4-Flash · Zhipu AI (z.ai)",
+        "key_name": "ZHIPU_API_KEY",
+        "type": "oai",
+        "base_url": "https://open.bigmodel.cn/api/paas/v4/",
+        "model": "glm-4-flash",
+        "free": True,
+        "signup_url": "https://z.ai/",
+    },
 ]
 
 
