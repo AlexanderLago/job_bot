@@ -160,13 +160,24 @@ def _slug_from_jd(jd_lines: list) -> str:
     NOISE = {
         "about the job", "job description", "about this role", "about the role",
         "position overview", "job summary", "about us", "job posting",
-        "about this position", "overview",
+        "about this position", "overview", "basic qualifications",
+        "preferred qualifications", "minimum qualifications",
+        "key responsibilities", "responsibilities", "requirements",
+        "what you'll do", "what you will do", "what we're looking for",
+        "what we are looking for", "nice to have", "required skills",
+        "preferred skills", "equal opportunity", "about the team",
+        "who you are", "who we are", "the role", "the team",
     }
+    # Words that, if they start a short line, mean it's a section header not a company
     SKIP = {
         "about", "job", "description", "requirements", "responsibilities",
         "overview", "summary", "position", "role", "opportunity", "posting",
         "remote", "hybrid", "the", "a", "an", "this", "we", "our", "your",
         "what", "who", "how", "why", "when", "where", "which",
+        "basic", "preferred", "minimum", "key", "required", "nice",
+        "qualifications", "skills", "benefits", "compensation", "salary",
+        "equal", "diversity", "inclusion", "apply", "note", "please",
+        "must", "strong", "excellent", "experience", "ability", "knowledge",
     }
     clean = [l for l in jd_lines[:25] if l.strip() and l.lower().strip() not in NOISE]
 
