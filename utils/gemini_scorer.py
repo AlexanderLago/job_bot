@@ -52,8 +52,7 @@ Here is the job description:
 Score the resume against the job description. Return ONLY the JSON object."""
 
     payload = {
-        "systemInstruction": {"parts": [{"text": _SYSTEM_PROMPT}]},
-        "contents": [{"parts": [{"text": user_message}]}],
+        "contents": [{"parts": [{"text": _SYSTEM_PROMPT + "\n\n---\n\n" + user_message}]}],
         "generationConfig": {
             "temperature": 0.1,
             "maxOutputTokens": 1024,
