@@ -130,15 +130,19 @@ def _score_user_msg(resume_text: str, jd: str) -> str:
     )
 
 
-def _is_rate_limit(exc: Exception) -> bool:
+def _should_skip(exc: Exception) -> bool:
+    """Return True for any error that means we should skip to the next provider."""
     msg = str(exc).lower()
-    return any(x in msg for x in ("429", "rate_limit", "rate limit", "resource_exhausted", "quota"))
+    return any(x in msg for x in (
+        "429", "rate_limit", "rate limit", "resource_exhausted", "quota",  # rate limits
+        "404", "not found", "not_found", "no such model", "does not exist",  # bad model/endpoint
+    ))
 
 
 def _call_oai(base_url: str, api_key: str, model: str, system: str, user: str,
                temperature: float, max_tokens: int) -> str:
     """Make an OpenAI-compatible chat completion request."""
-    from openai import OpenAI, RateLimitError as OAIRateLimitError
+    from openai import OpenAI, RateLimitError as OAIRateLimitError, NotFoundError as OAINotFoundError
     client = OpenAI(api_key=api_key, base_url=base_url)
     try:
         resp = client.chat.completions.create(
@@ -151,10 +155,10 @@ def _call_oai(base_url: str, api_key: str, model: str, system: str, user: str,
             max_tokens=max_tokens,
         )
         return resp.choices[0].message.content or ""
-    except OAIRateLimitError as e:
+    except (OAIRateLimitError, OAINotFoundError) as e:
         raise ProviderRateLimitError(str(e))
     except Exception as e:
-        if _is_rate_limit(e):
+        if _should_skip(e):
             raise ProviderRateLimitError(str(e))
         raise
 
@@ -170,7 +174,7 @@ def call_tailor(provider: dict, api_key: str, resume_text: str, jd: str, tempera
         try:
             return tailor_resume(resume_text, jd, api_key, temperature)
         except Exception as e:
-            if _is_rate_limit(e):
+            if _should_skip(e):
                 raise ProviderRateLimitError(str(e))
             raise
 
@@ -179,7 +183,7 @@ def call_tailor(provider: dict, api_key: str, resume_text: str, jd: str, tempera
         try:
             return tailor_resume_gemini(resume_text, jd, api_key, temperature)
         except Exception as e:
-            if _is_rate_limit(e):
+            if _should_skip(e):
                 raise ProviderRateLimitError(str(e))
             raise
 
@@ -208,7 +212,7 @@ def call_score(provider: dict, api_key: str, resume_text: str, jd: str) -> dict:
         try:
             return score_resume(resume_text, jd, api_key)
         except Exception as e:
-            if _is_rate_limit(e):
+            if _should_skip(e):
                 raise ProviderRateLimitError(str(e))
             raise
 
@@ -217,7 +221,7 @@ def call_score(provider: dict, api_key: str, resume_text: str, jd: str) -> dict:
         try:
             return score_resume_gemini(resume_text, jd, api_key)
         except Exception as e:
-            if _is_rate_limit(e):
+            if _should_skip(e):
                 raise ProviderRateLimitError(str(e))
             raise
 

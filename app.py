@@ -242,9 +242,10 @@ def _call_with_fallback(fn, available, all_keys, preferred_cfg, *args):
             continue
         try:
             return fn(p, key, *args), p
-        except ProviderRateLimitError:
+        except ProviderRateLimitError as _e:
             st.session_state.rate_limited_providers.add(p["id"])
-            st.toast(f"⚠️ {p['label']} rate limited — trying next provider...")
+            _msg = "model unavailable" if any(x in str(_e).lower() for x in ("404", "not found")) else "rate limited"
+            st.toast(f"⚠️ {p['label']} {_msg} — trying next provider...")
     raise RuntimeError("All configured providers are rate limited. Wait a moment and try again.")
 
 
