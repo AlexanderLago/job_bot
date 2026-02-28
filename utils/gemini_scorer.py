@@ -4,7 +4,7 @@ import json
 import re
 import requests
 
-_MODEL = "gemini-2.0-flash"
+_MODEL = "gemini-1.5-flash"
 _API_URL = f"https://generativelanguage.googleapis.com/v1/models/{_MODEL}:generateContent"
 
 _SYSTEM_PROMPT = """You are an expert ATS analyst and career coach. \
