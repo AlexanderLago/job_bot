@@ -1,6 +1,9 @@
+import base64
+import json as _json
 import re
 import traceback
 from datetime import datetime
+from pathlib import Path
 
 import streamlit as st
 
@@ -13,6 +16,39 @@ from utils.docx_builder import build_docx
 from utils.pdf_builder import build_pdf
 from utils.job_scraper import scrape_job_url
 from utils.log_builder import build_log_docx, build_log_csv
+
+# ── Disk persistence helpers ──────────────────────────────────────────────────
+_SAVE_DIR  = Path.home() / ".job_bot"
+_SAVE_FILE = _SAVE_DIR / "saved_state.json"
+
+def _load_saved() -> dict:
+    """Read persisted state from disk. Returns {} if nothing saved yet."""
+    try:
+        if _SAVE_FILE.exists():
+            return _json.loads(_SAVE_FILE.read_text(encoding="utf-8"))
+    except Exception:
+        pass
+    return {}
+
+def _write_saved(data: dict) -> None:
+    """Overwrite the saved state file atomically."""
+    try:
+        _SAVE_DIR.mkdir(parents=True, exist_ok=True)
+        _SAVE_FILE.write_text(_json.dumps(data), encoding="utf-8")
+    except Exception:
+        pass
+
+def _patch_saved(**kwargs) -> None:
+    """Merge kwargs into the saved state (read-modify-write)."""
+    d = _load_saved()
+    d.update(kwargs)
+    _write_saved(d)
+
+def _clear_saved() -> None:
+    try:
+        _SAVE_FILE.unlink(missing_ok=True)
+    except Exception:
+        pass
 
 # ── Page config ───────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -95,12 +131,95 @@ if "fetched_job_text" not in st.session_state:
     st.session_state.fetched_job_text = ""
 if "last_score" not in st.session_state:
     st.session_state.last_score = None
+if "tailor_result" not in st.session_state:
+    st.session_state.tailor_result = None
+
+# ── Load persisted state from disk (runs once per session) ───────────────────
+if "fs_loaded" not in st.session_state:
+    _saved = _load_saved()
+    if _saved.get("master_name") and not st.session_state.master_resume_name:
+        st.session_state.master_resume_name  = _saved["master_name"]
+        st.session_state.master_resume_text  = _saved.get("master_text", "")
+        _b64 = _saved.get("master_bytes", "")
+        st.session_state.master_resume_bytes = base64.b64decode(_b64) if _b64 else b""
+    if not st.session_state.app_log:
+        st.session_state.app_log = _saved.get("app_log", [])
+    if not st.session_state.history:
+        st.session_state.history = _saved.get("history_meta", [])
+    st.session_state.fs_loaded = True
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _company_slug(company: str) -> str:
     return re.sub(r"[^a-z0-9]", "", company.lower()) or "company"
+
+
+def _slug_from_jd(jd_lines: list) -> str:
+    """Best-effort company name extraction for the output filename slug."""
+    NOISE = {
+        "about the job", "job description", "about this role", "about the role",
+        "position overview", "job summary", "about us", "job posting",
+        "about this position", "overview",
+    }
+    SKIP = {
+        "about", "job", "description", "requirements", "responsibilities",
+        "overview", "summary", "position", "role", "opportunity", "posting",
+        "remote", "hybrid", "the", "a", "an", "this", "we", "our", "your",
+        "what", "who", "how", "why", "when", "where", "which",
+    }
+    clean = [l for l in jd_lines[:25] if l.strip() and l.lower().strip() not in NOISE]
+
+    # 1) "Role at Company" — search first 5 clean lines
+    for line in clean[:5]:
+        m = re.search(
+            r'\bat\s+([A-Z][A-Za-z0-9& .,\-]{1,35}?)(?=\s*[,|–\-]|\s+(?:is|are|was|has|have)\b|$)',
+            line,
+        )
+        if m:
+            s = _company_slug(m.group(1).strip())
+            if len(s) >= 2:
+                return s
+
+    # 2) "Company is/are/was/has..." at start of a line — catches "Capital One is..."
+    for line in clean[:12]:
+        m = re.match(r'^([A-Z][A-Za-z0-9& .,\-]{1,35}?)\s+(?:is|are|was|has|have)\b', line)
+        if m:
+            cand = m.group(1).strip()
+            words = cand.split()
+            if 1 <= len(words) <= 4 and words[0].lower() not in SKIP:
+                s = _company_slug(cand)
+                if len(s) >= 3:
+                    return s
+
+    # 3) Short standalone capitalized line (1–4 words)
+    for line in clean[:10]:
+        words = line.split()
+        if 1 <= len(words) <= 4 and words[0][0].isupper():
+            if words[0].lower() not in SKIP:
+                s = _company_slug(line)
+                if len(s) >= 2:
+                    return s
+
+    # Fallback: first non-noise line
+    return _company_slug(clean[0]) if clean else "tailored"
+
+
+def _condense_resume(data: dict) -> dict:
+    """Trim resume content lightly so it fits on one page."""
+    import copy
+    d = copy.deepcopy(data)
+    # Trim summary to first 2 sentences
+    summary = d.get("summary", "")
+    if summary:
+        sentences = re.split(r'(?<=[.!?])\s+', summary.strip())
+        if len(sentences) > 2:
+            d["summary"] = " ".join(sentences[:2])
+    # Cap most-recent job at 5 bullets
+    exp = d.get("experience", [])
+    if exp and len(exp[0].get("bullets", [])) > 5:
+        exp[0]["bullets"] = exp[0]["bullets"][:5]
+    return d
 
 
 def _score_color(score: int) -> str:
@@ -148,6 +267,11 @@ with st.sidebar:
             st.session_state.master_resume_bytes = raw
             st.session_state.master_resume_name = master_file.name
             st.session_state.master_resume_text = parsed
+            _patch_saved(
+                master_name  = st.session_state.master_resume_name,
+                master_text  = st.session_state.master_resume_text,
+                master_bytes = base64.b64encode(raw).decode(),
+            )
             st.success(f"✅ {master_file.name}")
         except Exception as e:
             st.error(f"Could not read master resume: {e}")
@@ -209,6 +333,17 @@ with st.sidebar:
         ["DOCX + PDF", "DOCX only", "PDF only"],
         index=0,
     )
+
+    st.divider()
+    st.markdown("**🗑️ Saved Data**")
+    if st.button("Clear all saved data", type="secondary"):
+        _clear_saved()
+        st.session_state.master_resume_name  = ""
+        st.session_state.master_resume_text  = ""
+        st.session_state.master_resume_bytes = b""
+        st.session_state.app_log  = []
+        st.session_state.history  = []
+        st.success("All saved data cleared.")
 
     st.divider()
     st.caption("Built with Claude Sonnet · [Anthropic](https://anthropic.com)")
@@ -390,6 +525,7 @@ with tab_tailor:
 
     # ── Tailor ────────────────────────────────────────────────────────────────
     if run_btn:
+        st.session_state.tailor_result = None  # clear previous result on new attempt
         errors = []
         if not api_key:
             errors.append("No API key — enter it in the sidebar.")
@@ -444,17 +580,11 @@ with tab_tailor:
                         st.code(traceback.format_exc())
                 st.stop()
 
-        company = resume_data.get("name", "")  # We'll get company from job later
-        # Try to extract company from experience or data
-        company_name = ""
-        # If Claude put a company in the data use it; otherwise derive from job desc first line
-        if resume_data.get("experience"):
-            pass  # We need the target company, not from the resume
-        # Extract first meaningful word group from job description as company fallback
+        resume_data = _condense_resume(resume_data)
+
         jd_lines = [ln.strip() for ln in job_description.splitlines() if ln.strip()]
-        if jd_lines:
-            company_name = jd_lines[0][:40]  # first line of JD often has company/title
-        slug = _company_slug(company_name) if company_name else "tailored"
+        company_name = jd_lines[0][:40] if jd_lines else ""
+        slug = _slug_from_jd(jd_lines)
 
         # Build files
         docx_bytes, pdf_bytes = None, None
@@ -484,15 +614,36 @@ with tab_tailor:
             "pdf_bytes": pdf_bytes,
         }
         st.session_state.history.insert(0, history_entry)
+        _hist_meta = [
+            {k: v for k, v in e.items() if k not in ("docx_bytes", "pdf_bytes")}
+            for e in st.session_state.history
+        ]
+        _patch_saved(history_meta=_hist_meta)
+        st.session_state.tailor_result = {
+            "resume_data":  resume_data,
+            "docx_bytes":   docx_bytes,
+            "pdf_bytes":    pdf_bytes,
+            "slug":         slug,
+            "company_name": company_name,
+            "job_title":    jd_lines[0] if jd_lines else "",
+            "score":        st.session_state.last_score.get("score") if st.session_state.last_score else None,
+        }
 
-        # ── Results ───────────────────────────────────────────────────────────
+    # ── Results (persists across reruns) ──────────────────────────────────────
+    if st.session_state.get("tailor_result"):
+        tr           = st.session_state.tailor_result
+        resume_data  = tr["resume_data"]
+        docx_bytes   = tr["docx_bytes"]
+        pdf_bytes    = tr["pdf_bytes"]
+        slug         = tr["slug"]
+        company_name = tr["company_name"]
+
         st.divider()
         st.success("Your tailored resume is ready!")
 
         dl_col1, dl_col2, dl_col3 = st.columns([1, 1, 2])
-        candidate_name = resume_data.get("name", "Resume").replace(" ", "_")
         docx_filename = f"resume_{slug}.docx"
-        pdf_filename = f"resume_{slug}.pdf"
+        pdf_filename  = f"resume_{slug}.pdf"
 
         if docx_bytes:
             with dl_col1:
@@ -515,15 +666,15 @@ with tab_tailor:
         with st.expander("➕ Add to Application Log", expanded=False):
             log_c1, log_c2 = st.columns(2)
             with log_c1:
-                log_title = st.text_input("Job Title", value=history_entry["job_title"], key="log_title")
-                log_company = st.text_input("Company", value=company_name, key="log_company")
+                log_title    = st.text_input("Job Title", value=tr["job_title"], key="log_title")
+                log_company  = st.text_input("Company", value=company_name, key="log_company")
                 log_location = st.text_input("Location", placeholder="New York, NY", key="log_location")
             with log_c2:
                 log_work_type = st.selectbox("Work Type", ["Hybrid", "Remote", "On-site"], key="log_work_type")
                 log_fit = st.number_input(
                     "Fit %",
                     min_value=0, max_value=100,
-                    value=history_entry["score"] or 0,
+                    value=tr["score"] or 0,
                     key="log_fit",
                 )
                 log_date = st.date_input("Date Applied", value=datetime.today(), key="log_date")
@@ -536,6 +687,7 @@ with tab_tailor:
                     "work_type": log_work_type,
                     "fit_pct": log_fit,
                 })
+                _patch_saved(app_log=st.session_state.app_log)
                 st.success("Added to your Application Log!")
 
         # ── Preview ───────────────────────────────────────────────────────────
@@ -580,7 +732,7 @@ with tab_tailor:
 
         if resume_data.get("skills"):
             st.markdown("**SKILLS**")
-            st.markdown(" · ".join(resume_data["skills"]))
+            st.markdown(", ".join(resume_data["skills"]))
             st.divider()
 
         keywords = resume_data.get("keywords_added", [])
@@ -595,7 +747,7 @@ with tab_tailor:
 # ══════════════════════════════════════════════════════════════════════════════
 with tab_history:
     st.markdown("### Session History")
-    st.caption("All resumes tailored this session. Data clears when you close the tab.")
+    st.caption("Tailoring history is saved in your browser. File downloads must be re-generated each session.")
 
     if not st.session_state.history:
         st.info("No tailored resumes yet. Head to the **✨ Tailor** tab to get started.")
@@ -635,6 +787,8 @@ with tab_history:
                         key=f"hist_pdf_{i}",
                         use_container_width=True,
                     )
+            if not entry.get("docx_bytes") and not entry.get("pdf_bytes"):
+                st.caption("Re-run tailoring to regenerate download.")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -665,6 +819,7 @@ with tab_log:
                     "work_type": m_work_type,
                     "fit_pct": m_fit,
                 })
+                _patch_saved(app_log=st.session_state.app_log)
                 st.success("Entry added!")
                 st.rerun()
             else:
@@ -713,4 +868,5 @@ with tab_log:
         st.markdown("")
         if st.button("🗑️ Clear Log", type="secondary"):
             st.session_state.app_log = []
+            _patch_saved(app_log=[])
             st.rerun()

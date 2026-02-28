@@ -3,7 +3,7 @@
 import io
 from docx import Document
 from docx.shared import Pt, Inches, RGBColor
-from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_LINE_SPACING
 from docx.oxml.ns import qn
 from docx.oxml import OxmlElement
 
@@ -35,7 +35,7 @@ def _set_para_spacing(para, before=0, after=2):
 def _section_header(doc, title: str):
     """Add an ATS-friendly section header with a rule underneath."""
     para = doc.add_paragraph()
-    _set_para_spacing(para, before=8, after=0)
+    _set_para_spacing(para, before=4, after=0)
     run = para.add_run(title.upper())
     run.bold = True
     run.font.size = Pt(11)
@@ -44,10 +44,12 @@ def _section_header(doc, title: str):
 
 
 def _bullet(doc, text: str):
-    """Add a bullet point paragraph."""
-    para = doc.add_paragraph(style="List Bullet")
-    _set_para_spacing(para, before=0, after=1)
-    run = para.add_run(text)
+    """Add a bullet point paragraph (plain Normal style — avoids List Bullet spacing overhead)."""
+    para = doc.add_paragraph()
+    _set_para_spacing(para, before=0, after=0)
+    para.paragraph_format.line_spacing_rule = WD_LINE_SPACING.SINGLE
+    para.paragraph_format.left_indent = Inches(0.15)
+    run = para.add_run("\u2022  " + text)
     run.font.size = Pt(10)
     run.font.name = "Calibri"
 
@@ -74,17 +76,20 @@ def build_docx(data: dict) -> bytes:
     """
     doc = Document()
 
-    # Page margins (0.75 inch all around — ATS-safe range)
+    # Page margins
     for section in doc.sections:
-        section.top_margin = Inches(0.75)
-        section.bottom_margin = Inches(0.75)
+        section.top_margin = Inches(0.5)
+        section.bottom_margin = Inches(0.5)
         section.left_margin = Inches(0.75)
         section.right_margin = Inches(0.75)
 
-    # Set default font
+    # Set default font + kill Word's default 1.08× line-height multiplier
     style = doc.styles["Normal"]
     style.font.name = "Calibri"
     style.font.size = Pt(10)
+    style.paragraph_format.line_spacing_rule = WD_LINE_SPACING.SINGLE
+    style.paragraph_format.space_before = Pt(0)
+    style.paragraph_format.space_after = Pt(0)
 
     # ── Name ──────────────────────────────────────────────────────────────────
     name_para = doc.add_paragraph()
@@ -92,7 +97,7 @@ def build_docx(data: dict) -> bytes:
     _set_para_spacing(name_para, before=0, after=2)
     name_run = name_para.add_run(data.get("name", ""))
     name_run.bold = True
-    name_run.font.size = Pt(18)
+    name_run.font.size = Pt(16)
     name_run.font.name = "Calibri"
 
     # ── Contact line ──────────────────────────────────────────────────────────
@@ -107,7 +112,7 @@ def build_docx(data: dict) -> bytes:
     if contact_line:
         contact_para = doc.add_paragraph()
         contact_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        _set_para_spacing(contact_para, before=0, after=6)
+        _set_para_spacing(contact_para, before=0, after=4)
         contact_run = contact_para.add_run(contact_line)
         contact_run.font.size = Pt(9)
         contact_run.font.name = "Calibri"
@@ -118,7 +123,7 @@ def build_docx(data: dict) -> bytes:
     if summary:
         _section_header(doc, "Professional Summary")
         para = doc.add_paragraph()
-        _set_para_spacing(para, before=2, after=4)
+        _set_para_spacing(para, before=1, after=1)
         run = para.add_run(summary)
         run.font.size = Pt(10)
         run.font.name = "Calibri"
@@ -130,7 +135,7 @@ def build_docx(data: dict) -> bytes:
         for job in experience:
             # Title + Company line
             title_para = doc.add_paragraph()
-            _set_para_spacing(title_para, before=4, after=0)
+            _set_para_spacing(title_para, before=2, after=0)
             title_run = title_para.add_run(job.get("title", ""))
             title_run.bold = True
             title_run.font.size = Pt(11)
@@ -138,7 +143,7 @@ def build_docx(data: dict) -> bytes:
 
             # Company + location + dates (same paragraph, right-aligned dates via tab)
             meta_para = doc.add_paragraph()
-            _set_para_spacing(meta_para, before=0, after=1)
+            _set_para_spacing(meta_para, before=0, after=0)
             company_str = job.get("company", "")
             location_str = job.get("location", "")
             dates_str = job.get("dates", "")
@@ -164,14 +169,14 @@ def build_docx(data: dict) -> bytes:
         _section_header(doc, "Education")
         for edu in education:
             degree_para = doc.add_paragraph()
-            _set_para_spacing(degree_para, before=4, after=0)
+            _set_para_spacing(degree_para, before=2, after=0)
             d_run = degree_para.add_run(edu.get("degree", ""))
             d_run.bold = True
             d_run.font.size = Pt(11)
             d_run.font.name = "Calibri"
 
             school_para = doc.add_paragraph()
-            _set_para_spacing(school_para, before=0, after=1)
+            _set_para_spacing(school_para, before=0, after=0)
             school_text = edu.get("school", "")
             loc_text = edu.get("location", "")
             dates_text = edu.get("dates", "")
@@ -188,22 +193,19 @@ def build_docx(data: dict) -> bytes:
             details = edu.get("details", "")
             if details:
                 det_para = doc.add_paragraph()
-                _set_para_spacing(det_para, before=0, after=1)
+                _set_para_spacing(det_para, before=0, after=0)
                 det_para.add_run(details).font.size = Pt(10)
 
     # ── Skills ────────────────────────────────────────────────────────────────
     skills = data.get("skills", [])
     if skills:
         _section_header(doc, "Skills")
-        # Group skills into rows of ~4 for readability
-        chunk_size = 4
-        rows = [skills[i:i+chunk_size] for i in range(0, len(skills), chunk_size)]
-        for row in rows:
-            para = doc.add_paragraph()
-            _set_para_spacing(para, before=1, after=1)
-            run = para.add_run("  •  ".join(row))
-            run.font.size = Pt(10)
-            run.font.name = "Calibri"
+        para = doc.add_paragraph()
+        _set_para_spacing(para, before=0, after=0)
+        para.paragraph_format.line_spacing_rule = WD_LINE_SPACING.SINGLE
+        run = para.add_run(", ".join(skills))
+        run.font.size = Pt(10)
+        run.font.name = "Calibri"
 
     # ── Certifications ────────────────────────────────────────────────────────
     certs = data.get("certifications", [])
