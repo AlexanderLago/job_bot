@@ -97,7 +97,7 @@ Please tailor this resume to the job description following all the rules in your
 Return ONLY the JSON object, nothing else."""
 
     payload = {
-        "system_instruction": {"parts": [{"text": _SYSTEM_PROMPT}]},
+        "systemInstruction": {"parts": [{"text": _SYSTEM_PROMPT}]},
         "contents": [{"parts": [{"text": user_message}]}],
         "generationConfig": {
             "temperature": temperature,

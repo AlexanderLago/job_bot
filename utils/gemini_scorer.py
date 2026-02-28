@@ -52,7 +52,7 @@ Here is the job description:
 Score the resume against the job description. Return ONLY the JSON object."""
 
     payload = {
-        "system_instruction": {"parts": [{"text": _SYSTEM_PROMPT}]},
+        "systemInstruction": {"parts": [{"text": _SYSTEM_PROMPT}]},
         "contents": [{"parts": [{"text": user_message}]}],
         "generationConfig": {
             "temperature": 0.1,
