@@ -157,18 +157,15 @@ with st.sidebar:
     st.divider()
 
     # ── Provider / API key auto-detection ─────────────────────────────────────
-    _DEFAULT_GEMINI_KEY = "AIzaSyBDOS8Jesq_enl-VdV4zVtJd2xJRorA7eI"
+    # Gemini key is hardcoded (it's already public on GitHub).
+    # Anthropic key is read from secrets only — never hardcoded.
+    _GEMINI_KEY = "AIzaSyBDOS8Jesq_enl-VdV4zVtJd2xJRorA7eI"
 
-    _ant_key, _gem_key = "", ""
+    _ant_key = ""
     try:
         _ant_key = st.secrets.get("ANTHROPIC_API_KEY", "") or ""
-        _gem_key = st.secrets.get("GEMINI_API_KEY", "") or ""
     except Exception:
         pass
-
-    # Fall back to hardcoded default if no secrets configured
-    if not _gem_key:
-        _gem_key = _DEFAULT_GEMINI_KEY
 
     if _ant_key:
         provider = "anthropic"
@@ -177,7 +174,7 @@ with st.sidebar:
         st.success("Claude (Anthropic)")
     else:
         provider = "gemini"
-        api_key = _gem_key
+        api_key = _GEMINI_KEY
         st.markdown("**🤖 AI Provider**")
         st.success("Gemini (Google)")
 
@@ -348,7 +345,7 @@ with tab_tailor:
                         result = score_resume_gemini(active_resume, job_description, api_key)
                     st.session_state.last_score = result
                 except Exception as e:
-                    st.error(f"Scoring error: {e}")
+                    st.error(f"Scoring error (raw): {str(e)[:600]}")
                     st.session_state.last_score = None
 
     # Show score card if we have a result
@@ -436,13 +433,7 @@ with tab_tailor:
             except Exception as e:
                 err_str = str(e)
                 if "RESOURCE_EXHAUSTED" in err_str or "429" in err_str or "quota" in err_str.lower():
-                    st.error(
-                        "**Gemini free tier quota exceeded.** "
-                        "This usually means the model isn't available on your project's free tier. "
-                        "Try again in a few minutes, or visit "
-                        "[Google AI Studio](https://aistudio.google.com/app/apikey) to create a "
-                        "fresh API key in a new project."
-                    )
+                    st.error(f"**Gemini quota error.** Raw details: {err_str[:600]}")
                 else:
                     st.error(f"AI error: {e}")
                     with st.expander("Debug info"):
