@@ -1,11 +1,11 @@
-# utils/gemini_scorer.py — Gemini resume scoring via direct REST API (no SDK)
+# utils/gemini_scorer.py — Gemini resume scoring using google-genai SDK
 
 import json
 import re
-import requests
+from google import genai
+from google.genai import types
 
-_MODEL = "gemini-1.5-flash"
-_API_URL = f"https://generativelanguage.googleapis.com/v1/models/{_MODEL}:generateContent"
+_MODEL = "gemini-2.0-flash"
 
 _SYSTEM_PROMPT = """You are an expert ATS analyst and career coach. \
 Your job is to evaluate how well a candidate's resume matches a given job description.
@@ -34,9 +34,11 @@ def score_resume_gemini(
     api_key: str,
 ) -> dict:
     """
-    Call Gemini REST API to score resume fit against a job description.
+    Call Gemini to score how well the resume matches the job description.
     Returns a dict with keys: score, strengths, gaps, keywords_missing.
     """
+    client = genai.Client(api_key=api_key)
+
     user_message = f"""Here is the candidate's resume:
 
 <resume>
@@ -51,25 +53,17 @@ Here is the job description:
 
 Score the resume against the job description. Return ONLY the JSON object."""
 
-    payload = {
-        "contents": [{"parts": [{"text": _SYSTEM_PROMPT + "\n\n---\n\n" + user_message}]}],
-        "generationConfig": {
-            "temperature": 0.1,
-            "maxOutputTokens": 1024,
-        },
-    }
-
-    resp = requests.post(
-        _API_URL,
-        params={"key": api_key},
-        json=payload,
-        timeout=30,
+    response = client.models.generate_content(
+        model=_MODEL,
+        contents=user_message,
+        config=types.GenerateContentConfig(
+            system_instruction=_SYSTEM_PROMPT,
+            temperature=0.1,
+            max_output_tokens=1024,
+        ),
     )
 
-    if not resp.ok:
-        _raise_friendly(resp)
-
-    raw = resp.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
+    raw = response.text.strip()
     raw = re.sub(r"^```(?:json)?\s*", "", raw)
     raw = re.sub(r"\s*```$", "", raw)
 
@@ -84,16 +78,3 @@ Score the resume against the job description. Return ONLY the JSON object."""
     result.setdefault("keywords_missing", [])
 
     return result
-
-
-def _raise_friendly(resp: requests.Response):
-    try:
-        detail = resp.json()
-        msg = detail.get("error", {}).get("message", resp.text)
-    except Exception:
-        msg = resp.text
-    if resp.status_code == 429:
-        raise RuntimeError(f"Gemini rate limit hit — try again in a moment. ({msg})")
-    if resp.status_code == 403:
-        raise RuntimeError(f"Gemini API key invalid or missing permissions. ({msg})")
-    raise RuntimeError(f"Gemini API error {resp.status_code}: {msg}")

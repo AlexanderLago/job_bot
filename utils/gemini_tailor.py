@@ -1,11 +1,11 @@
-# utils/gemini_tailor.py — Gemini resume tailoring via direct REST API (no SDK)
+# utils/gemini_tailor.py — Gemini resume tailoring using google-genai SDK
 
 import json
 import re
-import requests
+from google import genai
+from google.genai import types
 
-_MODEL = "gemini-1.5-flash"
-_API_URL = f"https://generativelanguage.googleapis.com/v1/models/{_MODEL}:generateContent"
+_MODEL = "gemini-2.0-flash"
 
 _SYSTEM_PROMPT = """You are an expert ATS resume writer and career coach. Your job is to tailor a \
 candidate's resume to a specific job description to maximize their chances of passing Applicant \
@@ -76,9 +76,11 @@ def tailor_resume_gemini(
     temperature: float = 0.3,
 ) -> dict:
     """
-    Call Gemini REST API to tailor the resume to the job description.
+    Call Gemini to tailor the resume to the job description.
     Returns a dict with the structured resume data.
     """
+    client = genai.Client(api_key=api_key)
+
     user_message = f"""Here is the candidate's current resume:
 
 <resume>
@@ -96,27 +98,17 @@ Temperature setting: {temperature:.2f} ({"be conservative, stay close to origina
 Please tailor this resume to the job description following all the rules in your instructions. \
 Return ONLY the JSON object, nothing else."""
 
-    payload = {
-        "contents": [{"parts": [{"text": _SYSTEM_PROMPT + "\n\n---\n\n" + user_message}]}],
-        "generationConfig": {
-            "temperature": temperature,
-            "maxOutputTokens": 4096,
-        },
-    }
-
-    resp = requests.post(
-        _API_URL,
-        params={"key": api_key},
-        json=payload,
-        timeout=60,
+    response = client.models.generate_content(
+        model=_MODEL,
+        contents=user_message,
+        config=types.GenerateContentConfig(
+            system_instruction=_SYSTEM_PROMPT,
+            temperature=temperature,
+            max_output_tokens=4096,
+        ),
     )
 
-    if not resp.ok:
-        _raise_friendly(resp)
-
-    raw = resp.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
-
-    # Strip markdown code fences if Gemini wrapped it
+    raw = response.text.strip()
     raw = re.sub(r"^```(?:json)?\s*", "", raw)
     raw = re.sub(r"\s*```$", "", raw)
 
@@ -124,16 +116,3 @@ Return ONLY the JSON object, nothing else."""
         return json.loads(raw)
     except json.JSONDecodeError as e:
         raise ValueError(f"AI returned invalid JSON: {e}\n\nRaw output:\n{raw[:500]}")
-
-
-def _raise_friendly(resp: requests.Response):
-    try:
-        detail = resp.json()
-        msg = detail.get("error", {}).get("message", resp.text)
-    except Exception:
-        msg = resp.text
-    if resp.status_code == 429:
-        raise RuntimeError(f"Gemini rate limit hit — try again in a moment. ({msg})")
-    if resp.status_code == 403:
-        raise RuntimeError(f"Gemini API key invalid or missing permissions. ({msg})")
-    raise RuntimeError(f"Gemini API error {resp.status_code}: {msg}")
