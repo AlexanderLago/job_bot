@@ -5,7 +5,7 @@ import re
 from google import genai
 from google.genai import types
 
-_MODEL = "gemini-2.0-flash-lite"
+_MODEL = "gemini-2.5-flash-preview-05-20"
 
 _SYSTEM_PROMPT = """You are an expert ATS analyst and career coach. \
 Your job is to evaluate how well a candidate's resume matches a given job description.
