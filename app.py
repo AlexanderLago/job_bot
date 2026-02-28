@@ -157,7 +157,7 @@ with st.sidebar:
     st.divider()
 
     # ── Provider / API key auto-detection ─────────────────────────────────────
-    _DEFAULT_GEMINI_KEY = "AIzaSyAlEuUi0f3KqtxRiNH5n09cVTJN2eQKwHg"
+    _DEFAULT_GEMINI_KEY = "AIzaSyBDOS8Jesq_enl-VdV4zVtJd2xJRorA7eI"
 
     _ant_key, _gem_key = "", ""
     try:
