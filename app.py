@@ -58,59 +58,136 @@ st.set_page_config(
 # ── Custom CSS ────────────────────────────────────────────────────────────────
 st.markdown("""
 <style>
-    .main-title {
-        font-size: 2.8rem;
-        font-weight: 800;
-        background: linear-gradient(135deg, #4F46E5, #7C3AED);
-        -webkit-background-clip: text;
-        -webkit-text-fill-color: transparent;
-        margin-bottom: 0;
-    }
-    .subtitle {
-        color: #94A3B8;
-        font-size: 1rem;
-        margin-top: 0;
-        margin-bottom: 2rem;
-    }
-    .keyword-pill {
-        display: inline-block;
-        background: #1E293B;
-        border: 1px solid #4F46E5;
-        color: #A5B4FC;
-        border-radius: 999px;
-        padding: 2px 12px;
-        font-size: 0.82rem;
-        margin: 3px 3px 3px 0;
-    }
-    .section-label {
-        font-size: 0.75rem;
-        text-transform: uppercase;
-        letter-spacing: 0.1em;
-        color: #64748B;
-        margin-bottom: 4px;
-    }
-    .score-card {
-        background: #1E293B;
-        border: 1px solid #334155;
-        border-radius: 12px;
-        padding: 1rem 1.25rem;
-        margin-bottom: 1rem;
-    }
-    .score-number {
-        font-size: 3rem;
-        font-weight: 800;
-        line-height: 1;
-    }
-    .history-card {
-        background: #1E293B;
-        border: 1px solid #334155;
-        border-radius: 10px;
-        padding: 1rem;
-        margin-bottom: 0.75rem;
-    }
-    div[data-testid="stDownloadButton"] button {
-        width: 100%;
-    }
+@import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Share+Tech+Mono&display=swap');
+
+/* ═══════════════════════════════════════════════════
+   JOB BOT — ULTRON ROBOTIC THEME
+   ═══════════════════════════════════════════════════ */
+
+/* ── Background: dark + circuit grid ── */
+.stApp {
+    background-color: #060606;
+    background-image:
+        linear-gradient(rgba(160,160,160,0.03) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(160,160,160,0.03) 1px, transparent 1px);
+    background-size: 28px 28px;
+}
+
+/* ── Sidebar ── */
+[data-testid="stSidebar"] {
+    background: linear-gradient(180deg, #0c0c0c 0%, #080808 100%);
+    border-right: 1px solid #1e1e1e;
+}
+[data-testid="stSidebar"] .stMarkdown p,
+[data-testid="stSidebar"] label,
+[data-testid="stSidebar"] .stCaption { color: #888 !important; }
+[data-testid="stSidebar"] strong { color: #bbb !important; font-family: 'Orbitron', monospace !important; letter-spacing: 0.05em !important; font-size: 0.75rem !important; }
+
+/* ── Tabs ── */
+.stTabs [data-baseweb="tab-list"] { background: #0a0a0a; border-bottom: 1px solid #1e1e1e; gap: 4px; }
+.stTabs [data-baseweb="tab"] { background: #0e0e0e; border: 1px solid #1e1e1e; border-bottom: none; color: #555 !important; font-family: 'Share Tech Mono', monospace; letter-spacing: 0.12em; border-radius: 2px 2px 0 0; }
+.stTabs [aria-selected="true"] { background: #0a0a0a !important; color: #CC0000 !important; border-color: #CC0000 !important; box-shadow: 0 0 12px rgba(204,0,0,0.2); }
+
+/* ── Buttons ── */
+.stButton > button { background: linear-gradient(135deg, #181818 0%, #0f0f0f 100%) !important; border: 1px solid #2e2e2e !important; color: #999 !important; font-family: 'Share Tech Mono', monospace !important; letter-spacing: 0.08em !important; text-transform: uppercase !important; border-radius: 2px !important; transition: all 0.15s ease !important; }
+.stButton > button:hover { border-color: #CC0000 !important; color: #CC0000 !important; box-shadow: 0 0 14px rgba(204,0,0,0.25) !important; background: linear-gradient(135deg, #160a0a 0%, #0f0707 100%) !important; }
+.stButton > button[kind="primary"] { background: linear-gradient(135deg, #7a0000 0%, #CC0000 100%) !important; border: 1px solid #FF2020 !important; color: #fff !important; box-shadow: 0 0 22px rgba(204,0,0,0.45) !important; }
+.stButton > button[kind="primary"]:hover { box-shadow: 0 0 32px rgba(204,0,0,0.65) !important; }
+
+/* ── Download buttons ── */
+div[data-testid="stDownloadButton"] button { width: 100%; background: linear-gradient(135deg, #181818, #0f0f0f) !important; border: 1px solid #2e2e2e !important; color: #999 !important; font-family: 'Share Tech Mono', monospace !important; text-transform: uppercase !important; letter-spacing: 0.06em !important; border-radius: 2px !important; }
+div[data-testid="stDownloadButton"] button:hover { border-color: #CC0000 !important; color: #CC0000 !important; box-shadow: 0 0 10px rgba(204,0,0,0.2) !important; }
+
+/* ── Inputs ── */
+.stTextArea textarea, .stTextInput > div > div > input { background: #0a0a0a !important; border: 1px solid #222 !important; color: #bbb !important; font-family: 'Share Tech Mono', monospace !important; border-radius: 2px !important; }
+.stTextArea textarea:focus, .stTextInput > div > div > input:focus { border-color: #CC0000 !important; box-shadow: 0 0 8px rgba(204,0,0,0.15) !important; }
+
+/* ── File uploader ── */
+[data-testid="stFileUploader"] { border: 1px dashed #2a2a2a !important; background: #0a0a0a !important; border-radius: 2px !important; }
+
+/* ── Sliders ── */
+[data-testid="stSlider"] [role="slider"] { background: #CC0000 !important; box-shadow: 0 0 8px rgba(204,0,0,0.5) !important; }
+
+/* ── Dividers ── */
+hr { border-color: #1a1a1a !important; }
+
+/* ── Alerts ── */
+[data-testid="stSuccess"] { background: #060f06 !important; border: 1px solid #1a3a1a !important; border-radius: 2px !important; }
+[data-testid="stWarning"] { background: #0f0a00 !important; border: 1px solid #3a2800 !important; border-radius: 2px !important; }
+[data-testid="stError"]   { background: #0f0000 !important; border: 1px solid #3a0000 !important; border-radius: 2px !important; }
+[data-testid="stInfo"]    { background: #00050f !important; border: 1px solid #001a3a !important; border-radius: 2px !important; }
+
+/* ── Expanders ── */
+[data-testid="stExpander"] { background: #0a0a0a !important; border: 1px solid #1e1e1e !important; border-radius: 2px !important; }
+[data-testid="stExpander"]:hover { border-color: #CC0000 !important; }
+
+/* ── Scrollbar ── */
+::-webkit-scrollbar { width: 6px; } ::-webkit-scrollbar-track { background: #080808; } ::-webkit-scrollbar-thumb { background: #2a2a2a; border-radius: 0; } ::-webkit-scrollbar-thumb:hover { background: #CC0000; }
+
+/* ── Custom classes ── */
+.main-title {
+    font-family: 'Orbitron', monospace;
+    font-size: 5rem;
+    font-weight: 900;
+    background: linear-gradient(135deg, #666 0%, #bbb 25%, #fff 50%, #bbb 75%, #555 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    letter-spacing: 0.3em;
+    text-align: center;
+    margin: 0.4rem 0 0 0;
+    filter: drop-shadow(0 0 30px rgba(255,255,255,0.08));
+}
+.subtitle {
+    font-family: 'Share Tech Mono', monospace;
+    color: #CC0000 !important;
+    font-size: 0.72rem;
+    letter-spacing: 0.35em;
+    text-align: center;
+    text-transform: uppercase;
+    margin: 0.2rem 0 2rem 0;
+}
+.section-label {
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 0.68rem;
+    text-transform: uppercase;
+    letter-spacing: 0.2em;
+    color: #CC0000;
+    margin-bottom: 6px;
+    border-left: 2px solid #CC0000;
+    padding-left: 8px;
+}
+.score-card {
+    background: linear-gradient(135deg, #0e0e0e, #080808);
+    border: 1px solid #CC0000;
+    border-radius: 2px;
+    padding: 1rem 1.25rem;
+    margin-bottom: 1rem;
+    box-shadow: 0 0 24px rgba(204,0,0,0.12);
+}
+.score-number {
+    font-family: 'Orbitron', monospace;
+    font-size: 3rem;
+    font-weight: 800;
+    line-height: 1;
+}
+.history-card {
+    background: linear-gradient(135deg, #0e0e0e, #0a0a0a);
+    border: 1px solid #1e1e1e;
+    border-radius: 2px;
+    padding: 1rem;
+    margin-bottom: 0.75rem;
+}
+.keyword-pill {
+    display: inline-block;
+    background: #0d0d0d;
+    border: 1px solid #CC0000;
+    color: #CC0000;
+    border-radius: 1px;
+    padding: 2px 10px;
+    font-size: 0.78rem;
+    font-family: 'Share Tech Mono', monospace;
+    margin: 3px 3px 3px 0;
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -402,15 +479,62 @@ with st.sidebar:
         st.success("All saved data cleared.")
 
     st.divider()
-    st.caption("Built with Claude Sonnet · [Anthropic](https://anthropic.com)")
+    st.caption("⚙ UNIT POWERED BY CLAUDE SONNET · [ANTHROPIC](https://anthropic.com)")
 
 # ── Main header ───────────────────────────────────────────────────────────────
-st.markdown('<p class="main-title">Job Bot</p>', unsafe_allow_html=True)
-st.markdown(
-    '<p class="subtitle">Tailors your resume to any job posting — ATS-optimized, '
-    'keyword-matched, never fabricated.</p>',
-    unsafe_allow_html=True,
-)
+st.markdown("""
+<div style="text-align:center; padding: 1.2rem 0 0 0;">
+  <svg xmlns="http://www.w3.org/2000/svg" width="120" height="132" viewBox="0 0 120 132">
+    <defs>
+      <filter id="rglow" x="-60%" y="-60%" width="220%" height="220%">
+        <feGaussianBlur stdDeviation="3.5" result="blur"/>
+        <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+      </filter>
+      <linearGradient id="metal" x1="0%" y1="0%" x2="100%" y2="100%">
+        <stop offset="0%" style="stop-color:#383838"/>
+        <stop offset="45%" style="stop-color:#1a1a1a"/>
+        <stop offset="100%" style="stop-color:#2d2d2d"/>
+      </linearGradient>
+    </defs>
+    <!-- Head -->
+    <polygon points="18,2 102,2 118,20 118,88 102,106 18,106 2,88 2,20" fill="url(#metal)" stroke="#3a3a3a" stroke-width="1.5"/>
+    <!-- Forehead panel -->
+    <rect x="22" y="7" width="76" height="16" rx="1" fill="#111" stroke="#272727" stroke-width="1"/>
+    <!-- Forehead centre light -->
+    <rect x="55" y="11" width="10" height="6" rx="1" fill="#CC0000" filter="url(#rglow)" opacity="0.95"/>
+    <!-- Panel seam lines -->
+    <line x1="2" y1="55" x2="22" y2="55" stroke="#2a2a2a" stroke-width="1"/>
+    <line x1="98" y1="55" x2="118" y2="55" stroke="#2a2a2a" stroke-width="1"/>
+    <line x1="2" y1="65" x2="22" y2="65" stroke="#222" stroke-width="0.8"/>
+    <line x1="98" y1="65" x2="118" y2="65" stroke="#222" stroke-width="0.8"/>
+    <!-- Eye sockets (dark recesses) -->
+    <polygon points="6,43 54,37 54,57 6,57" fill="#040404" stroke="#161616" stroke-width="0.5"/>
+    <polygon points="66,37 114,43 114,57 66,57" fill="#040404" stroke="#161616" stroke-width="0.5"/>
+    <!-- Eyes: glowing red visor -->
+    <polygon points="8,44 52,38 52,56 8,56" fill="#CC0000" filter="url(#rglow)"/>
+    <polygon points="68,38 112,44 112,56 68,56" fill="#CC0000" filter="url(#rglow)"/>
+    <!-- Nose sensor -->
+    <rect x="52" y="60" width="16" height="11" rx="1" fill="#111" stroke="#CC0000" stroke-width="0.7" opacity="0.65"/>
+    <!-- Mouth area (Ultron angular) -->
+    <polygon points="20,74 34,68 86,68 100,74 90,88 30,88" fill="#070707" stroke="#252525" stroke-width="1"/>
+    <line x1="36" y1="68" x2="36" y2="88" stroke="#1c1c1c" stroke-width="1"/>
+    <line x1="48" y1="68" x2="48" y2="88" stroke="#1c1c1c" stroke-width="1"/>
+    <line x1="60" y1="68" x2="60" y2="88" stroke="#242424" stroke-width="1.5"/>
+    <line x1="72" y1="68" x2="72" y2="88" stroke="#1c1c1c" stroke-width="1"/>
+    <line x1="84" y1="68" x2="84" y2="88" stroke="#1c1c1c" stroke-width="1"/>
+    <!-- Chin -->
+    <polygon points="30,88 90,88 96,106 24,106" fill="url(#metal)" stroke="#333" stroke-width="1"/>
+    <!-- Neck blocks -->
+    <rect x="32" y="106" width="22" height="14" rx="1" fill="#111" stroke="#252525"/>
+    <rect x="66" y="106" width="22" height="14" rx="1" fill="#111" stroke="#252525"/>
+    <!-- Ear panels -->
+    <rect x="0" y="46" width="5" height="22" rx="1" fill="#141414" stroke="#252525"/>
+    <rect x="115" y="46" width="5" height="22" rx="1" fill="#141414" stroke="#252525"/>
+  </svg>
+</div>
+<p class="main-title">JOB BOT</p>
+<p class="subtitle">▸ RESUME OPTIMIZATION SYSTEM ONLINE ◂</p>
+""", unsafe_allow_html=True)
 
 # ── Tabs ──────────────────────────────────────────────────────────────────────
 tab_tailor, tab_history, tab_log = st.tabs(["✨ Tailor", "📁 History", "📋 Application Log"])
@@ -476,7 +600,7 @@ with tab_tailor:
                 fetch_btn = st.button("Fetch", use_container_width=True)
 
             if fetch_btn and job_url.strip():
-                with st.spinner("Fetching job posting..."):
+                with st.spinner("⚙️ ScAnNiNg NeTwOrK... BeEp BoOp..."):
                     text, err = scrape_job_url(job_url.strip())
                 if err:
                     st.warning(f"⚠️ {err}")
@@ -532,7 +656,7 @@ with tab_tailor:
             for e in errors:
                 st.error(e)
         else:
-            with st.spinner("Scoring your resume fit..."):
+            with st.spinner("⚙️ AnAlYzInG tArGeT jOb DaTa... BEEP BOOP BOP..."):
                 try:
                     result, used = _call_with_fallback(
                         call_score, _available, _all_keys, _selected_cfg,
@@ -602,7 +726,7 @@ with tab_tailor:
 
         # Parse resume if not using master
         if not use_master:
-            with st.spinner("Reading your resume..."):
+            with st.spinner("⚙️ InItIaLiZiNg ReSuMe ScAnNeR..."):
                 try:
                     resume_text = parse_resume(uploaded_file.read(), uploaded_file.name)
                 except Exception as e:
@@ -615,7 +739,7 @@ with tab_tailor:
 
         # Call AI provider (with automatic fallback on rate limit)
         _provider_label = _selected_cfg["label"] if _selected_cfg else "AI"
-        with st.spinner(f"Tailoring your resume with {_provider_label} — this takes 15–30 seconds..."):
+        with st.spinner(f"⚙️ [{_provider_label}] CaLcUlAtInG rEsUmE mAtRiX... BEEP BOOP BOP..."):
             try:
                 resume_data, used = _call_with_fallback(
                     call_tailor, _available, _all_keys, _selected_cfg,
@@ -641,14 +765,14 @@ with tab_tailor:
         # Build files
         docx_bytes, pdf_bytes = None, None
         if output_format in ("DOCX + PDF", "DOCX only"):
-            with st.spinner("Building DOCX..."):
+            with st.spinner("⚙️ AsSeBlInG dOcUmEnT mAtRiX..."):
                 try:
                     docx_bytes = build_docx(resume_data)
                 except Exception as e:
                     st.error(f"DOCX build error: {e}")
 
         if output_format in ("DOCX + PDF", "PDF only"):
-            with st.spinner("Building PDF..."):
+            with st.spinner("⚙️ ReNdErInG pDf CoNsTrUcT..."):
                 try:
                     pdf_bytes = build_pdf(resume_data)
                 except Exception as e:
