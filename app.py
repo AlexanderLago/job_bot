@@ -232,6 +232,8 @@ if "last_score" not in st.session_state:
     st.session_state.last_score = None
 if "tailor_result" not in st.session_state:
     st.session_state.tailor_result = None
+if "tailor_improvement" not in st.session_state:
+    st.session_state.tailor_improvement = None  # {before, after, delta}
 if "rate_limited_providers" not in st.session_state:
     st.session_state.rate_limited_providers = set()
 if "rl_until" not in st.session_state:
@@ -469,6 +471,26 @@ def _extract_job_title(jd_lines: list, resume_data: dict | None = None) -> str:
 
     # 5) Last resort: truncate first line
     return jd_lines[0][:60].strip() if jd_lines else ""
+
+
+def _resume_data_to_text(data: dict) -> str:
+    """Flatten a resume_data dict to plain text suitable for the scorer."""
+    lines = []
+    for field in ("name", "email", "phone", "location"):
+        if data.get(field):
+            lines.append(data[field])
+    if data.get("summary"):
+        lines.append(data["summary"])
+    for exp in data.get("experience", []):
+        lines.append(f"{exp.get('title', '')} at {exp.get('company', '')} ({exp.get('dates', '')})")
+        lines.extend(exp.get("bullets", []))
+    for edu in data.get("education", []):
+        lines.append(f"{edu.get('degree', '')} — {edu.get('school', '')}")
+    if data.get("skills"):
+        lines.append("Skills: " + ", ".join(data["skills"]))
+    if data.get("certifications"):
+        lines.append("Certifications: " + ", ".join(data["certifications"]))
+    return "\n".join(lines)
 
 
 def _condense_resume(data: dict) -> dict:
@@ -1104,6 +1126,43 @@ with tab_tailor:
                 except Exception as e:
                     st.error(f"PDF build error: {e}")
 
+        # ── Improvement scoring ───────────────────────────────────────────────
+        st.session_state.tailor_improvement = None
+        try:
+            with st.spinner("⚙️ CaLcUlAtInG iMpRoVeMeNt ScOrE..."):
+                # Original score — use cache if available from Score My Fit
+                _orig_ck = hashlib.md5(f"score||{resume_text}||{job_description}".encode()).hexdigest()
+                if _orig_ck in st.session_state.result_cache:
+                    _orig_score_result = st.session_state.result_cache[_orig_ck]
+                else:
+                    _orig_score_result, _ = _call_with_fallback(
+                        call_score, _available, _all_keys, _selected_cfg,
+                        resume_text, job_description,
+                    )
+                    st.session_state.result_cache[_orig_ck] = _orig_score_result
+
+                # Tailored score
+                _tailored_text = _resume_data_to_text(resume_data)
+                _tail_ck = hashlib.md5(f"score||{_tailored_text}||{job_description}".encode()).hexdigest()
+                if _tail_ck in st.session_state.result_cache:
+                    _tail_score_result = st.session_state.result_cache[_tail_ck]
+                else:
+                    _tail_score_result, _ = _call_with_fallback(
+                        call_score, _available, _all_keys, _selected_cfg,
+                        _tailored_text, job_description,
+                    )
+                    st.session_state.result_cache[_tail_ck] = _tail_score_result
+
+                _before = _orig_score_result.get("score", 0)
+                _after  = _tail_score_result.get("score", 0)
+                st.session_state.tailor_improvement = {
+                    "before": _before,
+                    "after":  _after,
+                    "delta":  _after - _before,
+                }
+        except Exception:
+            pass  # improvement score is non-critical — silently skip on error
+
         # Save to session history
         history_entry = {
             "company": company_name,
@@ -1167,6 +1226,58 @@ with tab_tailor:
                     file_name=pdf_filename,
                     mime="application/pdf",
                 )
+
+        # ── Improvement card ──────────────────────────────────────────────────
+        _imp = st.session_state.tailor_improvement
+        if _imp:
+            _before, _after, _delta = _imp["before"], _imp["after"], _imp["delta"]
+            _delta_color  = "#22C55E" if _delta > 0 else ("#EF4444" if _delta < 0 else "#888")
+            _delta_sign   = "+" if _delta > 0 else ""
+            _delta_label  = f"{_delta_sign}{_delta} pts"
+            _bar_before   = min(100, max(0, _before))
+            _bar_after    = min(100, max(0, _after))
+            st.markdown(f"""
+<div style="background:linear-gradient(135deg,#0e0e0e,#080808);border:1px solid #1e1e1e;
+            border-radius:2px;padding:1rem 1.25rem;margin:1rem 0;">
+  <div style="font-family:'Share Tech Mono',monospace;font-size:0.68rem;text-transform:uppercase;
+              letter-spacing:0.2em;color:#CC0000;border-left:2px solid #CC0000;
+              padding-left:8px;margin-bottom:0.75rem;">ATS Improvement</div>
+  <div style="display:flex;align-items:center;gap:1.5rem;flex-wrap:wrap;">
+    <div style="text-align:center;">
+      <div style="font-family:'Share Tech Mono',monospace;color:#888;font-size:0.7rem;
+                  text-transform:uppercase;letter-spacing:0.1em;">Before</div>
+      <div style="font-family:'Orbitron',monospace;font-size:2rem;font-weight:800;
+                  color:{_score_color(_before)};line-height:1.1;">{_before}</div>
+    </div>
+    <div style="font-family:'Orbitron',monospace;font-size:1.5rem;color:#333;">→</div>
+    <div style="text-align:center;">
+      <div style="font-family:'Share Tech Mono',monospace;color:#888;font-size:0.7rem;
+                  text-transform:uppercase;letter-spacing:0.1em;">After</div>
+      <div style="font-family:'Orbitron',monospace;font-size:2rem;font-weight:800;
+                  color:{_score_color(_after)};line-height:1.1;">{_after}</div>
+    </div>
+    <div style="text-align:center;">
+      <div style="font-family:'Share Tech Mono',monospace;color:#888;font-size:0.7rem;
+                  text-transform:uppercase;letter-spacing:0.1em;">Delta</div>
+      <div style="font-family:'Orbitron',monospace;font-size:2rem;font-weight:800;
+                  color:{_delta_color};line-height:1.1;">{_delta_label}</div>
+    </div>
+    <div style="flex:1;min-width:160px;">
+      <div style="font-family:'Share Tech Mono',monospace;color:#555;font-size:0.65rem;
+                  margin-bottom:4px;">ORIGINAL</div>
+      <div style="background:#111;border-radius:1px;height:6px;margin-bottom:6px;">
+        <div style="background:{_score_color(_before)};width:{_bar_before}%;height:6px;
+                    border-radius:1px;box-shadow:0 0 6px {_score_color(_before)}88;"></div>
+      </div>
+      <div style="font-family:'Share Tech Mono',monospace;color:#555;font-size:0.65rem;
+                  margin-bottom:4px;">TAILORED</div>
+      <div style="background:#111;border-radius:1px;height:6px;">
+        <div style="background:{_score_color(_after)};width:{_bar_after}%;height:6px;
+                    border-radius:1px;box-shadow:0 0 6px {_score_color(_after)}88;"></div>
+      </div>
+    </div>
+  </div>
+</div>""", unsafe_allow_html=True)
 
         # ── Mark as Applied ───────────────────────────────────────────────────
         if not st.session_state.mark_applied_open:
