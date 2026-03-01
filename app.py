@@ -16,6 +16,8 @@ from utils.pdf_builder import build_pdf
 from utils.job_scraper import scrape_job_url
 from utils.log_builder import build_log_docx, build_log_csv
 from utils.interview_prep import search_interview_content, generate_questions, rate_answer
+from utils.job_search import search_jobs, generate_search_keywords, _COUNTRY_LABELS
+from utils.salary_estimator import extract_salary_from_jd, search_salary_data, estimate_salary
 
 # ── Disk persistence helpers ──────────────────────────────────────────────────
 _SAVE_DIR  = Path.home() / ".job_bot"
@@ -226,6 +228,18 @@ if "prep_active_q" not in st.session_state:
     st.session_state.prep_active_q = None
 if "mark_applied_open" not in st.session_state:
     st.session_state.mark_applied_open = False
+if "job_search_results" not in st.session_state:
+    st.session_state.job_search_results = []
+if "job_search_page" not in st.session_state:
+    st.session_state.job_search_page = 1
+if "job_search_params" not in st.session_state:
+    st.session_state.job_search_params = {}
+if "job_search_total" not in st.session_state:
+    st.session_state.job_search_total = 0
+if "salary_result" not in st.session_state:
+    st.session_state.salary_result = None
+if "salary_job_title" not in st.session_state:
+    st.session_state.salary_job_title = ""
 
 # ── Load persisted state from disk (runs once per session) ───────────────────
 if "fs_loaded" not in st.session_state:
@@ -246,6 +260,11 @@ if "fs_loaded" not in st.session_state:
         _wk = f"ukey_{_p['key_name']}"
         if _wk not in st.session_state:
             st.session_state[_wk] = _saved_ukeys.get(_p["key_name"], "")
+    # Load persisted Adzuna keys
+    if "ukey_ADZUNA_APP_ID" not in st.session_state:
+        st.session_state["ukey_ADZUNA_APP_ID"] = _saved.get("adzuna_app_id", "")
+    if "ukey_ADZUNA_APP_KEY" not in st.session_state:
+        st.session_state["ukey_ADZUNA_APP_KEY"] = _saved.get("adzuna_app_key", "")
     # Migrate existing log entries that lack a status field
     for _entry in st.session_state.app_log:
         if "status" not in _entry:
@@ -484,6 +503,14 @@ with st.sidebar:
     _available = [_p for _p in PROVIDERS if _all_keys.get(_p["id"])]
     _rl = st.session_state.rate_limited_providers
 
+    # Adzuna key resolution
+    try:
+        _adzuna_id  = st.session_state.get("ukey_ADZUNA_APP_ID", "").strip() or st.secrets.get("ADZUNA_APP_ID", "") or ""
+        _adzuna_key = st.session_state.get("ukey_ADZUNA_APP_KEY", "").strip() or st.secrets.get("ADZUNA_APP_KEY", "") or ""
+    except Exception:
+        _adzuna_id  = st.session_state.get("ukey_ADZUNA_APP_ID", "").strip()
+        _adzuna_key = st.session_state.get("ukey_ADZUNA_APP_KEY", "").strip()
+
     st.markdown("**🤖 AI Model**")
 
     if not _available:
@@ -542,12 +569,21 @@ with st.sidebar:
                 help=f"Used by: {', '.join(_sharing)}",
                 placeholder="Paste API key…",
             )
+        st.markdown("---")
+        st.markdown("**Adzuna Job Search**")
+        st.caption("Free tier: 25,000 requests/month. [Get keys](https://developer.adzuna.com/)")
+        st.text_input("Adzuna App ID",  type="password", key="ukey_ADZUNA_APP_ID", placeholder="Paste App ID…")
+        st.text_input("Adzuna App Key", type="password", key="ukey_ADZUNA_APP_KEY", placeholder="Paste App Key…")
         if st.button("💾 Save My Keys", use_container_width=True):
             _to_save = {}
             for _p in PROVIDERS:
                 _kn = _p["key_name"]
                 _to_save[_kn] = st.session_state.get(f"ukey_{_kn}", "")
-            _patch_saved(user_keys=_to_save)
+            _patch_saved(
+                user_keys=_to_save,
+                adzuna_app_id=st.session_state.get("ukey_ADZUNA_APP_ID", ""),
+                adzuna_app_key=st.session_state.get("ukey_ADZUNA_APP_KEY", ""),
+            )
             st.success("Keys saved!")
             st.rerun()
 
@@ -663,7 +699,10 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ── Tabs ──────────────────────────────────────────────────────────────────────
-tab_tailor, tab_history, tab_log, tab_prep = st.tabs(["✨ Tailor", "📁 History", "📋 Application Log", "🎤 Interview Prep"])
+tab_tailor, tab_history, tab_log, tab_prep, tab_search, tab_salary = st.tabs([
+    "✨ Tailor", "📁 History", "📋 Application Log",
+    "🎤 Interview Prep", "🔍 Job Search", "💰 Salary Estimator",
+])
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1388,3 +1427,259 @@ with tab_prep:
                         st.rerun()
                     except Exception as _e:
                         st.error(f"Could not rate answer: {_e}")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# TAB 5 — JOB SEARCH
+# ══════════════════════════════════════════════════════════════════════════════
+with tab_search:
+    if not (_adzuna_id and _adzuna_key):
+        st.warning(
+            "⚠️ Adzuna API keys not configured. "
+            "Get free keys at [developer.adzuna.com](https://developer.adzuna.com/) "
+            "and paste them in the **🔑 Your API Keys** sidebar expander."
+        )
+        st.stop()
+
+    st.markdown('<p class="section-label">Job Search</p>', unsafe_allow_html=True)
+
+    _s_col1, _s_col2 = st.columns([3, 1])
+    with _s_col1:
+        _search_what = st.text_input(
+            "Keywords / Job Title",
+            placeholder="e.g. Data Analyst, Python Developer…",
+            key="search_what",
+        )
+    with _s_col2:
+        _country_options = list(_COUNTRY_LABELS.keys())
+        _country_labels_list = [f"{_COUNTRY_LABELS[c]} ({c.upper()})" for c in _country_options]
+        _country_idx = _country_options.index("us") if "us" in _country_options else 0
+        _search_country_display = st.selectbox(
+            "Country",
+            options=_country_labels_list,
+            index=_country_idx,
+            key="search_country",
+        )
+        _search_country = _country_options[_country_labels_list.index(_search_country_display)]
+
+    _s_col3, _s_col4, _s_col5 = st.columns([2, 1, 1])
+    with _s_col3:
+        _search_where = st.text_input(
+            "Location",
+            placeholder="City, state, or leave blank for all…",
+            key="search_where",
+        )
+    with _s_col4:
+        _search_results_n = st.selectbox("Results", [10, 20, 50], index=0, key="search_n")
+    with _s_col5:
+        st.markdown("<br>", unsafe_allow_html=True)
+        _search_remote = st.checkbox("Remote only", key="search_remote")
+
+    # Generate keywords from resume
+    if st.session_state.master_resume_text:
+        if st.button("⚡ Generate keywords from my resume", key="gen_keywords_btn"):
+            if not api_key:
+                st.warning("Select an AI provider in the sidebar first.")
+            else:
+                with st.spinner("⚙️ AnAlYzInG rEsUmE..."):
+                    try:
+                        _kws = generate_search_keywords(
+                            st.session_state.master_resume_text,
+                            _selected_cfg,
+                            api_key,
+                        )
+                        if _kws:
+                            st.session_state["search_what"] = ", ".join(_kws)
+                            st.rerun()
+                    except Exception as _ke:
+                        st.error(f"Could not generate keywords: {_ke}")
+
+    _search_btn = st.button("🔍 Search Jobs", type="primary", key="search_btn")
+
+    if _search_btn and _search_what.strip():
+        with st.spinner("⚙️ ScAnNiNg JoB dAtAbAsE... BEEP BOOP..."):
+            _results, _total, _err = search_jobs(
+                app_id=_adzuna_id,
+                app_key=_adzuna_key,
+                what=_search_what,
+                where=_search_where,
+                country=_search_country,
+                page=1,
+                results_per_page=_search_results_n,
+            )
+        if _err:
+            st.error(f"Search failed: {_err}")
+        else:
+            st.session_state.job_search_results = _results
+            st.session_state.job_search_total = _total
+            st.session_state.job_search_page = 1
+            st.session_state.job_search_params = {
+                "what": _search_what,
+                "where": _search_where,
+                "country": _search_country,
+                "results_per_page": _search_results_n,
+            }
+            if not _results:
+                st.info("No jobs found — try different keywords or location.")
+    elif _search_btn:
+        st.warning("Enter keywords to search.")
+
+    # Results display
+    if st.session_state.job_search_results:
+        _total_disp = st.session_state.job_search_total
+        _n_showing = len(st.session_state.job_search_results)
+        st.markdown(f"**{_total_disp:,} jobs found** — showing {_n_showing}")
+
+        for _ji, _job in enumerate(st.session_state.job_search_results):
+            _exp_label = f"**{_job['title']}** — {_job['company']} · {_job['location']}"
+            with st.expander(_exp_label, expanded=False):
+                _jc1, _jc2 = st.columns([2, 1])
+                with _jc1:
+                    if _job["category"]:
+                        st.caption(f"📂 {_job['category']}")
+                    st.markdown(f"**💰 Salary:** {_job['salary_display']}")
+                    if _job["posted_date"]:
+                        st.caption(f"📅 Posted: {_job['posted_date']}")
+                with _jc2:
+                    if _job["url"]:
+                        st.markdown(f"[View full posting ↗]({_job['url']})")
+
+                if _job["description"]:
+                    st.markdown(_job["description"])
+
+                if st.button("Tailor Resume →", key=f"tailor_from_search_{_ji}"):
+                    st.session_state.fetched_job_text = (
+                        f"{_job['title']} at {_job['company']}\n"
+                        f"Location: {_job['location']}\n\n"
+                        f"{_job['description']}"
+                    )
+                    st.session_state.salary_job_title = _job["title"]
+                    st.toast("Job description sent to ✨ Tailor tab — switch tabs!")
+
+        # Load More
+        _params = st.session_state.job_search_params
+        _loaded_all = _n_showing >= _total_disp
+        if not _loaded_all and _params:
+            if st.button("Load More", key="load_more_btn"):
+                _next_page = st.session_state.job_search_page + 1
+                with st.spinner("⚙️ LoAdInG mOrE rEsUlTs..."):
+                    _more, _, _merr = search_jobs(
+                        app_id=_adzuna_id,
+                        app_key=_adzuna_key,
+                        what=_params["what"],
+                        where=_params["where"],
+                        country=_params["country"],
+                        page=_next_page,
+                        results_per_page=_params["results_per_page"],
+                    )
+                if _merr:
+                    st.error(_merr)
+                else:
+                    st.session_state.job_search_results.extend(_more)
+                    st.session_state.job_search_page = _next_page
+                    st.rerun()
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# TAB 6 — SALARY ESTIMATOR
+# ══════════════════════════════════════════════════════════════════════════════
+with tab_salary:
+    st.markdown('<p class="section-label">Salary Estimator</p>', unsafe_allow_html=True)
+    st.markdown(
+        "Get a data-backed salary target to walk into your negotiation with confidence."
+    )
+
+    # Auto-populate job title from last search or history
+    _auto_title = st.session_state.salary_job_title
+    if not _auto_title and st.session_state.history:
+        _last = st.session_state.history[-1]
+        _auto_title = _last.get("role", "")
+
+    _sal_title = st.text_input(
+        "Job Title",
+        value=_auto_title,
+        placeholder="e.g. Senior Data Analyst",
+        key="sal_title",
+    )
+    _sal_location = st.text_input(
+        "Location",
+        placeholder="e.g. New York, NY or Remote",
+        key="sal_location",
+    )
+    # Auto-populate JD from session state (set by Tailor tab or Job Search tab)
+    _sal_jd = st.text_area(
+        "Job Description",
+        value=st.session_state.fetched_job_text,
+        placeholder="Paste the job description here…",
+        height=200,
+        key="sal_jd",
+    )
+
+    _sal_btn = st.button("💰 Estimate My Salary", type="primary", key="sal_btn")
+
+    if _sal_btn:
+        if not api_key:
+            st.error("No AI provider configured — add an API key in the sidebar.")
+        elif not _sal_title.strip():
+            st.error("Enter a job title.")
+        else:
+            # Check for salary in JD first
+            _jd_salary = extract_salary_from_jd(_sal_jd) if _sal_jd.strip() else None
+            if _jd_salary:
+                st.info(
+                    f"💡 Salary found in posting: **{_jd_salary['raw']}** "
+                    f"(${_jd_salary['min']:,} – ${_jd_salary['max']:,})"
+                )
+
+            with st.spinner("⚙️ CaLcUlAtInG sAlArY tArGeT... PROCESSING MARKET DATA..."):
+                _market_data = search_salary_data(_sal_title, _sal_location)
+
+                _resume_for_sal = st.session_state.master_resume_text or ""
+                try:
+                    _sal_result = estimate_salary(
+                        resume_text=_resume_for_sal,
+                        jd_text=_sal_jd,
+                        job_title=_sal_title,
+                        location=_sal_location,
+                        market_data=_market_data,
+                        jd_salary=_jd_salary,
+                        provider=_selected_cfg,
+                        api_key=api_key,
+                    )
+                    st.session_state.salary_result = _sal_result
+                    st.session_state.salary_job_title = _sal_title
+                except Exception as _se:
+                    st.error(f"Salary estimation failed: {_se}")
+
+    if st.session_state.salary_result:
+        _sr = st.session_state.salary_result
+        st.divider()
+
+        # Main metric
+        _ask = _sr.get("recommended_ask", 0)
+        st.metric(
+            label="Your target ask",
+            value=f"${_ask:,}" if _ask else "N/A",
+        )
+
+        # Market range
+        _mc1, _mc2, _mc3 = st.columns(3)
+        _mc1.metric("Market Low",  f"${_sr.get('market_low', 0):,}"  if _sr.get('market_low')  else "—")
+        _mc2.metric("Market Mid",  f"${_sr.get('market_mid', 0):,}"  if _sr.get('market_mid')  else "—")
+        _mc3.metric("Market High", f"${_sr.get('market_high', 0):,}" if _sr.get('market_high') else "—")
+
+        # Reasoning
+        if _sr.get("reasoning"):
+            st.markdown(_sr["reasoning"])
+
+        # Negotiation tips
+        _tips = _sr.get("negotiation_tips", [])
+        if _tips:
+            st.markdown("#### 🎯 Negotiation Tips")
+            for _tip in _tips:
+                st.markdown(f"- {_tip}")
+
+        # Sources
+        _sources = _sr.get("data_sources", [])
+        if _sources:
+            st.caption(f"Based on: {', '.join(_sources)}")
