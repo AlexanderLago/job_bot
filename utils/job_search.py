@@ -59,7 +59,6 @@ def search_jobs(
         "app_id": app_id,
         "app_key": app_key,
         "results_per_page": results_per_page,
-        "page": page,
         "content-type": "application/json",
     }
     if what.strip():
