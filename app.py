@@ -1175,36 +1175,40 @@ with tab_tailor:
                 st.rerun()
         else:
             st.markdown("**Save to Application Log**")
-            apply_c1, apply_c2 = st.columns(2)
-            with apply_c1:
-                apply_location = st.text_input(
-                    "Location", placeholder="New York, NY", key="apply_location"
-                )
-            with apply_c2:
-                apply_work_type = st.selectbox(
-                    "Work Type", ["Hybrid", "Remote", "On-site"], key="apply_work_type"
-                )
-            btn_confirm_col, btn_cancel_col, _ = st.columns([1, 1, 2])
-            with btn_confirm_col:
-                if st.button("Confirm & Save", type="primary", key="apply_confirm_btn"):
-                    new_entry = {
-                        "date": datetime.today().strftime("%Y-%m-%d"),
-                        "job_title": tr["job_title"],
-                        "company": tr["company_name"] or tr["slug"],
-                        "location": apply_location,
-                        "work_type": apply_work_type,
-                        "fit_pct": tr["score"] or 0,
-                        "status": "Applied",
-                    }
-                    st.session_state.app_log.append(new_entry)
-                    _patch_saved(app_log=st.session_state.app_log)
-                    st.session_state.mark_applied_open = False
-                    st.success("Added to your Application Log ✓ — view it in the 📋 Application Log tab.")
-                    st.rerun()
-            with btn_cancel_col:
-                if st.button("Cancel", key="apply_cancel_btn"):
-                    st.session_state.mark_applied_open = False
-                    st.rerun()
+            with st.form(key="apply_form"):
+                apply_c1, apply_c2 = st.columns(2)
+                with apply_c1:
+                    apply_location = st.text_input(
+                        "Location", placeholder="New York, NY"
+                    )
+                with apply_c2:
+                    apply_work_type = st.selectbox(
+                        "Work Type", ["Hybrid", "Remote", "On-site"]
+                    )
+                btn_confirm_col, btn_cancel_col, _ = st.columns([1, 1, 2])
+                with btn_confirm_col:
+                    _confirmed = st.form_submit_button("Confirm & Save", type="primary", use_container_width=True)
+                with btn_cancel_col:
+                    _cancelled = st.form_submit_button("Cancel", use_container_width=True)
+
+            if _confirmed:
+                new_entry = {
+                    "date": datetime.today().strftime("%Y-%m-%d"),
+                    "job_title": tr["job_title"],
+                    "company": tr["company_name"] or tr["slug"],
+                    "location": apply_location,
+                    "work_type": apply_work_type,
+                    "fit_pct": tr["score"] or 0,
+                    "status": "Applied",
+                }
+                st.session_state.app_log.append(new_entry)
+                _patch_saved(app_log=st.session_state.app_log)
+                st.session_state.mark_applied_open = False
+                st.success("Added to your Application Log ✓ — view it in the 📋 Application Log tab.")
+                st.rerun()
+            if _cancelled:
+                st.session_state.mark_applied_open = False
+                st.rerun()
 
         # ── Preview ───────────────────────────────────────────────────────────
         st.markdown("### Preview")
