@@ -1,6 +1,8 @@
 import base64
+import hashlib
 import json as _json
 import re
+import time
 import traceback
 from datetime import datetime
 from pathlib import Path
@@ -210,6 +212,10 @@ if "tailor_result" not in st.session_state:
     st.session_state.tailor_result = None
 if "rate_limited_providers" not in st.session_state:
     st.session_state.rate_limited_providers = set()
+if "rl_until" not in st.session_state:
+    st.session_state.rl_until = {}          # {provider_id: epoch float when cooldown expires}
+if "result_cache" not in st.session_state:
+    st.session_state.result_cache = {}      # {cache_key: result dict}
 if "prep_questions" not in st.session_state:
     st.session_state.prep_questions = []
 if "prep_chat" not in st.session_state:
@@ -234,6 +240,12 @@ if "fs_loaded" not in st.session_state:
     if not st.session_state.history:
         st.session_state.history = _saved.get("history_meta", [])
     st.session_state.fs_loaded = True
+    # Seed user-key widget states from disk so inputs show saved values on load
+    _saved_ukeys = _saved.get("user_keys", {})
+    for _p in PROVIDERS:
+        _wk = f"ukey_{_p['key_name']}"
+        if _wk not in st.session_state:
+            st.session_state[_wk] = _saved_ukeys.get(_p["key_name"], "")
     # Migrate existing log entries that lack a status field
     for _entry in st.session_state.app_log:
         if "status" not in _entry:
@@ -355,20 +367,46 @@ def _condense_resume(data: dict) -> dict:
     return d
 
 
+# Per-provider cooldown in seconds before it re-enters rotation after a rate limit.
+_RL_COOLDOWN = {
+    "anthropic": 300, "gemini": 60, "gemini15": 60, "groq": 60,
+    "cerebras": 60, "sambanova": 60, "openrouter": 60, "openrouter2": 60,
+    "openrouter3": 60, "zhipu": 60, "together": 60, "mistral": 60,
+    "fireworks": 60, "deepinfra": 60, "hyperbolic": 60,
+}
+
+
 def _call_with_fallback(fn, available, all_keys, preferred_cfg, *args):
     """Try preferred provider, then cycle through available on rate limit.
+    Tricks: auto-expire cooldowns, retry once before cycling, full fallback chain.
     Returns (result, used_provider_cfg). Raises RuntimeError if all exhausted."""
+    now = time.time()
+    # Auto-clear providers whose cooldown has expired
+    expired = [k for k, until in st.session_state.rl_until.items() if until <= now]
+    for k in expired:
+        del st.session_state.rl_until[k]
+    st.session_state.rate_limited_providers = set(st.session_state.rl_until.keys())
+
     order = [preferred_cfg] + [p for p in available if p["id"] != preferred_cfg["id"]]
     for p in order:
         key = all_keys.get(p["id"], "")
         if not key:
             continue
+        if p["id"] in st.session_state.rl_until:
+            continue  # still cooling down — skip
         try:
             return fn(p, key, *args), p
         except ProviderRateLimitError as _e:
-            st.session_state.rate_limited_providers.add(p["id"])
-            _msg = "model unavailable" if any(x in str(_e).lower() for x in ("404", "not found")) else "rate limited"
-            st.toast(f"⚠️ {p['label']} {_msg} — trying next provider...")
+            # Retry once after a brief pause (catches momentary blips)
+            time.sleep(3)
+            try:
+                return fn(p, key, *args), p
+            except ProviderRateLimitError:
+                cooldown = _RL_COOLDOWN.get(p["id"], 90)
+                st.session_state.rl_until[p["id"]] = time.time() + cooldown
+                st.session_state.rate_limited_providers.add(p["id"])
+                _msg = "model unavailable" if any(x in str(_e).lower() for x in ("404", "not found")) else f"rate limited (reset in {cooldown}s)"
+                st.toast(f"⚠️ {p['label']} {_msg} — trying next provider...")
     raise RuntimeError("All configured providers are rate limited. Wait a moment and try again.")
 
 
@@ -435,10 +473,13 @@ with st.sidebar:
     # as selectable options; lists unconfigured ones with signup links.
     _all_keys = {}
     for _p in PROVIDERS:
+        _secret_key = ""
         try:
-            _all_keys[_p["id"]] = st.secrets.get(_p["key_name"], "") or ""
+            _secret_key = st.secrets.get(_p["key_name"], "") or ""
         except Exception:
-            _all_keys[_p["id"]] = ""
+            pass
+        _user_key = st.session_state.get(f"ukey_{_p['key_name']}", "").strip()
+        _all_keys[_p["id"]] = _user_key or _secret_key
 
     _available = [_p for _p in PROVIDERS if _all_keys.get(_p["id"])]
     _rl = st.session_state.rate_limited_providers
@@ -453,8 +494,13 @@ with st.sidebar:
     else:
         _radio_ids = ["auto"] + [_p["id"] for _p in _available]
         _radio_labels = {"auto": "🔄 Auto (cycle on rate limit)"}
+        _now = time.time()
         for _p in _available:
-            _badge = " ⚠️ rate limited" if _p["id"] in _rl else " ✅"
+            if _p["id"] in st.session_state.rl_until:
+                _secs = max(0, int(st.session_state.rl_until[_p["id"]] - _now))
+                _badge = f" ⚠️ resetting in {_secs}s"
+            else:
+                _badge = " ✅"
             _radio_labels[_p["id"]] = _p["label"] + _badge
 
         _selected_id = st.radio(
@@ -477,13 +523,47 @@ with st.sidebar:
         provider = _selected_cfg["id"]
         api_key = _all_keys.get(provider, "")
 
+    # ── User API key inputs ────────────────────────────────────────────────────
+    with st.expander("🔑 Your API Keys"):
+        st.caption("Enter your own keys — they override the app's built-in keys and use your personal rate limit pool.")
+        _seen_kn: set = set()
+        for _p in PROVIDERS:
+            _kn = _p["key_name"]
+            if _kn in _seen_kn:
+                continue
+            _seen_kn.add(_kn)
+            # Collect all provider labels sharing this key_name
+            _sharing = [_q["label"] for _q in PROVIDERS if _q["key_name"] == _kn]
+            _input_label = _sharing[0] if len(_sharing) == 1 else _sharing[0].split("·")[-1].strip()
+            st.text_input(
+                _input_label,
+                type="password",
+                key=f"ukey_{_kn}",
+                help=f"Used by: {', '.join(_sharing)}",
+                placeholder="Paste API key…",
+            )
+        if st.button("💾 Save My Keys", use_container_width=True):
+            _to_save = {}
+            for _p in PROVIDERS:
+                _kn = _p["key_name"]
+                _to_save[_kn] = st.session_state.get(f"ukey_{_kn}", "")
+            _patch_saved(user_keys=_to_save)
+            st.success("Keys saved!")
+            st.rerun()
+
     # Unconfigured providers — show signup links
     _missing = [_p for _p in PROVIDERS if not _all_keys.get(_p["id"])]
     if _missing:
-        with st.expander(f"➕ Add {len(_missing)} more free provider{'s' if len(_missing) != 1 else ''}"):
-            for _p in _missing:
-                _tag = " (free)" if _p.get("free") else ""
-                st.markdown(f"**{_p['label']}**{_tag}  \n[Get API key]({_p['signup_url']})")
+        # Deduplicate by signup_url to avoid showing the same provider 3x (openrouter)
+        _seen_urls: set = set()
+        _missing_deduped = []
+        for _p in _missing:
+            if _p["signup_url"] not in _seen_urls:
+                _seen_urls.add(_p["signup_url"])
+                _missing_deduped.append(_p)
+        with st.expander(f"➕ Get free API keys ({len(_missing_deduped)} providers)"):
+            for _p in _missing_deduped:
+                st.markdown(f"**{_p['label']}** (free)  \n[Get key]({_p['signup_url']})")
 
     st.divider()
 
@@ -702,21 +782,27 @@ with tab_tailor:
             for e in errors:
                 st.error(e)
         else:
-            with st.spinner("⚙️ AnAlYzInG tArGeT jOb DaTa... BEEP BOOP BOP..."):
-                try:
-                    result, used = _call_with_fallback(
-                        call_score, _available, _all_keys, _selected_cfg,
-                        active_resume, job_description,
-                    )
-                    if used["id"] != provider:
-                        st.info(f"Switched to {used['label']} (primary was rate limited)")
-                    st.session_state.last_score = result
-                except RuntimeError as e:
-                    st.error(str(e))
-                    st.session_state.last_score = None
-                except Exception as e:
-                    st.error(f"Scoring error: {str(e)[:600]}")
-                    st.session_state.last_score = None
+            _score_ck = hashlib.md5(f"score||{active_resume}||{job_description}".encode()).hexdigest()
+            if _score_ck in st.session_state.result_cache:
+                st.session_state.last_score = st.session_state.result_cache[_score_ck]
+                st.toast("⚡ Score loaded from cache — no API call needed.")
+            else:
+                with st.spinner("⚙️ AnAlYzInG tArGeT jOb DaTa... BEEP BOOP BOP..."):
+                    try:
+                        result, used = _call_with_fallback(
+                            call_score, _available, _all_keys, _selected_cfg,
+                            active_resume, job_description,
+                        )
+                        if used["id"] != provider:
+                            st.info(f"Switched to {used['label']} (primary was rate limited)")
+                        st.session_state.last_score = result
+                        st.session_state.result_cache[_score_ck] = result
+                    except RuntimeError as e:
+                        st.error(str(e))
+                        st.session_state.last_score = None
+                    except Exception as e:
+                        st.error(f"Scoring error: {str(e)[:600]}")
+                        st.session_state.last_score = None
 
     # Show score card if we have a result
     if st.session_state.last_score:
@@ -783,24 +869,31 @@ with tab_tailor:
             st.error("Could not extract any text from your resume. Try a .docx or .txt file.")
             st.stop()
 
-        # Call AI provider (with automatic fallback on rate limit)
-        _provider_label = _selected_cfg["label"] if _selected_cfg else "AI"
-        with st.spinner(f"⚙️ [{_provider_label}] CaLcUlAtInG rEsUmE mAtRiX... BEEP BOOP BOP..."):
-            try:
-                resume_data, used = _call_with_fallback(
-                    call_tailor, _available, _all_keys, _selected_cfg,
-                    resume_text, job_description, temperature,
-                )
-                if used["id"] != provider:
-                    st.info(f"Switched to {used['label']} (primary was rate limited)")
-            except RuntimeError as e:
-                st.error(str(e))
-                st.stop()
-            except Exception as e:
-                st.error(f"AI error: {e}")
-                with st.expander("Debug info"):
-                    st.code(traceback.format_exc())
-                st.stop()
+        # Call AI provider (with automatic fallback on rate limit + caching)
+        _tailor_ck = hashlib.md5(f"tailor||{resume_text}||{job_description}||{temperature:.2f}".encode()).hexdigest()
+        if _tailor_ck in st.session_state.result_cache:
+            resume_data = st.session_state.result_cache[_tailor_ck]
+            used = _selected_cfg
+            st.toast("⚡ Result loaded from cache — no API call needed.")
+        else:
+            _provider_label = _selected_cfg["label"] if _selected_cfg else "AI"
+            with st.spinner(f"⚙️ [{_provider_label}] CaLcUlAtInG rEsUmE mAtRiX... BEEP BOOP BOP..."):
+                try:
+                    resume_data, used = _call_with_fallback(
+                        call_tailor, _available, _all_keys, _selected_cfg,
+                        resume_text, job_description, temperature,
+                    )
+                    if used["id"] != provider:
+                        st.info(f"Switched to {used['label']} (primary was rate limited)")
+                    st.session_state.result_cache[_tailor_ck] = resume_data
+                except RuntimeError as e:
+                    st.error(str(e))
+                    st.stop()
+                except Exception as e:
+                    st.error(f"AI error: {e}")
+                    with st.expander("Debug info"):
+                        st.code(traceback.format_exc())
+                    st.stop()
 
         resume_data = _condense_resume(resume_data)
 
