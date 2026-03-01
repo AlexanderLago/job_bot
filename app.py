@@ -369,6 +369,57 @@ def _slug_from_jd(jd_lines: list) -> str:
     return _company_slug(name) if name else "tailored"
 
 
+_TITLE_WORDS = {
+    "analyst", "engineer", "developer", "manager", "director", "specialist",
+    "coordinator", "consultant", "scientist", "architect", "designer", "lead",
+    "associate", "senior", "junior", "staff", "principal", "vp", "vice",
+    "president", "officer", "administrator", "executive", "representative",
+    "technician", "researcher", "intern", "recruiter", "strategist", "writer",
+    "editor", "producer", "planner", "accountant", "controller", "advisor",
+}
+
+
+def _extract_job_title(jd_lines: list, resume_data: dict | None = None) -> str:
+    """
+    Best-effort extraction of the target job title from JD lines.
+    Falls back to the AI-derived most-recent title in resume_data.
+    """
+    # 1) Explicit label: "Job Title: …" / "Position: …" / "Role: …"
+    for line in jd_lines[:20]:
+        m = re.match(
+            r'^(?:job\s*title|position|role|title)\s*[:\-–]\s*(.+)$',
+            line.strip(), re.IGNORECASE,
+        )
+        if m:
+            candidate = m.group(1).strip()
+            if len(candidate.split()) <= 8:
+                return candidate
+
+    # 2) Short line (1–6 words) in first 10 lines that contains a title word
+    for line in jd_lines[:10]:
+        words = line.split()
+        if 1 <= len(words) <= 6:
+            if any(w.lower() in _TITLE_WORDS for w in words):
+                return line.strip()
+
+    # 3) "Role at Company" pattern — take the role part
+    for line in jd_lines[:5]:
+        m = re.match(r'^(.+?)\s+at\s+[A-Z]', line)
+        if m:
+            candidate = m.group(1).strip()
+            if len(candidate.split()) <= 6:
+                return candidate
+
+    # 4) Fall back to the AI-tailored resume's most recent job title
+    if resume_data:
+        exp = resume_data.get("experience", [])
+        if exp and exp[0].get("title"):
+            return exp[0]["title"]
+
+    # 5) Last resort: truncate first line
+    return jd_lines[0][:60].strip() if jd_lines else ""
+
+
 def _condense_resume(data: dict) -> dict:
     """Trim resume content lightly so it fits on one page."""
     import copy
@@ -960,7 +1011,7 @@ with tab_tailor:
         history_entry = {
             "company": company_name,
             "slug": slug,
-            "job_title": jd_lines[0] if jd_lines else "",
+            "job_title": _extract_job_title(jd_lines, resume_data),
             "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M"),
             "score": st.session_state.last_score.get("score") if st.session_state.last_score else None,
             "data": resume_data,
@@ -983,7 +1034,7 @@ with tab_tailor:
             "pdf_bytes":    pdf_bytes,
             "slug":         slug,
             "company_name": company_name,
-            "job_title":    jd_lines[0] if jd_lines else "",
+            "job_title":    _extract_job_title(jd_lines, resume_data),
             "score":        st.session_state.last_score.get("score") if st.session_state.last_score else None,
         }
 
