@@ -1557,6 +1557,7 @@ with tab_search:
                 country=_search_country,
                 page=1,
                 results_per_page=_search_results_n,
+                remote=_search_remote,
             )
         if _err:
             st.error(f"Search failed: {_err}")
@@ -1569,6 +1570,7 @@ with tab_search:
                 "where": _search_where,
                 "country": _search_country,
                 "results_per_page": _search_results_n,
+                "remote": _search_remote,
             }
             if not _results:
                 st.info("No jobs found — try different keywords or location.")
@@ -1622,6 +1624,7 @@ with tab_search:
                         country=_params["country"],
                         page=_next_page,
                         results_per_page=_params["results_per_page"],
+                        remote=_params.get("remote", False),
                     )
                 if _merr:
                     st.error(_merr)

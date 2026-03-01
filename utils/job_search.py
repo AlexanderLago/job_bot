@@ -50,6 +50,7 @@ def search_jobs(
     page: int = 1,
     results_per_page: int = 10,
     full_time: bool = False,
+    remote: bool = False,
 ) -> tuple:
     """
     Search Adzuna for job listings.
@@ -61,8 +62,11 @@ def search_jobs(
         "results_per_page": results_per_page,
         "content-type": "application/json",
     }
-    if what.strip():
-        params["what"] = what.strip()
+    what_query = what.strip()
+    if remote and "remote" not in what_query.lower():
+        what_query = (what_query + " remote").strip()
+    if what_query:
+        params["what"] = what_query
     if where.strip():
         params["where"] = where.strip()
     if full_time:
