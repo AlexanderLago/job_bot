@@ -1,5 +1,7 @@
 # utils/job_scraper.py — Fetch a job posting URL and extract readable text
 
+from __future__ import annotations
+
 import requests
 from bs4 import BeautifulSoup
 

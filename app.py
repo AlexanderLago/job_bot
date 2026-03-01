@@ -13,6 +13,7 @@ from utils.docx_builder import build_docx
 from utils.pdf_builder import build_pdf
 from utils.job_scraper import scrape_job_url
 from utils.log_builder import build_log_docx, build_log_csv
+from utils.interview_prep import search_interview_content, generate_questions, rate_answer
 
 # ── Disk persistence helpers ──────────────────────────────────────────────────
 _SAVE_DIR  = Path.home() / ".job_bot"
@@ -209,6 +210,16 @@ if "tailor_result" not in st.session_state:
     st.session_state.tailor_result = None
 if "rate_limited_providers" not in st.session_state:
     st.session_state.rate_limited_providers = set()
+if "prep_questions" not in st.session_state:
+    st.session_state.prep_questions = []
+if "prep_chat" not in st.session_state:
+    st.session_state.prep_chat = []
+if "prep_job" not in st.session_state:
+    st.session_state.prep_job = {"company": "", "role": ""}
+if "prep_active_q" not in st.session_state:
+    st.session_state.prep_active_q = None
+if "mark_applied_open" not in st.session_state:
+    st.session_state.mark_applied_open = False
 
 # ── Load persisted state from disk (runs once per session) ───────────────────
 if "fs_loaded" not in st.session_state:
@@ -223,6 +234,10 @@ if "fs_loaded" not in st.session_state:
     if not st.session_state.history:
         st.session_state.history = _saved.get("history_meta", [])
     st.session_state.fs_loaded = True
+    # Migrate existing log entries that lack a status field
+    for _entry in st.session_state.app_log:
+        if "status" not in _entry:
+            _entry["status"] = "Applied"
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -231,65 +246,96 @@ def _company_slug(company: str) -> str:
     return re.sub(r"[^a-z0-9]", "", company.lower()) or "company"
 
 
-def _slug_from_jd(jd_lines: list) -> str:
-    """Best-effort company name extraction for the output filename slug."""
-    NOISE = {
-        "about the job", "job description", "about this role", "about the role",
-        "position overview", "job summary", "about us", "job posting",
-        "about this position", "overview", "basic qualifications",
-        "preferred qualifications", "minimum qualifications",
-        "key responsibilities", "responsibilities", "requirements",
-        "what you'll do", "what you will do", "what we're looking for",
-        "what we are looking for", "nice to have", "required skills",
-        "preferred skills", "equal opportunity", "about the team",
-        "who you are", "who we are", "the role", "the team",
-    }
-    # Words that, if they start a short line, mean it's a section header not a company
-    SKIP = {
-        "about", "job", "description", "requirements", "responsibilities",
-        "overview", "summary", "position", "role", "opportunity", "posting",
-        "remote", "hybrid", "the", "a", "an", "this", "we", "our", "your",
-        "what", "who", "how", "why", "when", "where", "which",
-        "basic", "preferred", "minimum", "key", "required", "nice",
-        "qualifications", "skills", "benefits", "compensation", "salary",
-        "equal", "diversity", "inclusion", "apply", "note", "please",
-        "must", "strong", "excellent", "experience", "ability", "knowledge",
-    }
-    clean = [l for l in jd_lines[:25] if l.strip() and l.lower().strip() not in NOISE]
+_JD_NOISE = {
+    "about the job", "job description", "about this role", "about the role",
+    "position overview", "job summary", "about us", "job posting",
+    "about this position", "overview", "basic qualifications",
+    "preferred qualifications", "minimum qualifications",
+    "key responsibilities", "responsibilities", "requirements",
+    "what you'll do", "what you will do", "what we're looking for",
+    "what we are looking for", "nice to have", "required skills",
+    "preferred skills", "equal opportunity", "about the team",
+    "who you are", "who we are", "the role", "the team",
+}
+_JD_SKIP = {
+    "about", "job", "description", "requirements", "responsibilities",
+    "overview", "summary", "position", "role", "opportunity", "posting",
+    "remote", "hybrid", "the", "a", "an", "this", "we", "our", "your",
+    "what", "who", "how", "why", "when", "where", "which",
+    "basic", "preferred", "minimum", "key", "required", "nice",
+    "qualifications", "skills", "benefits", "compensation", "salary",
+    "equal", "diversity", "inclusion", "apply", "note", "please",
+    "must", "strong", "excellent", "experience", "ability", "knowledge",
+    # job-title words that are never company names
+    "senior", "junior", "staff", "principal", "lead", "associate",
+    "engineer", "manager", "developer", "analyst", "designer", "director",
+    "specialist", "coordinator", "consultant", "scientist", "architect",
+    "recruiter", "product", "software", "data", "sales", "marketing",
+    "operations", "finance", "full", "part", "time", "contract",
+}
+_ABOUT_FILLER = {
+    "the", "us", "this", "our", "you", "a", "an",
+    "role", "team", "job", "position", "company", "opportunity", "department",
+}
 
-    # 1) "Role at Company" — search first 5 clean lines
+
+def _extract_company_name(jd_lines: list) -> str:
+    """
+    Best-effort extraction of the human-readable company name from JD lines.
+    Returns a display name string (may contain spaces/caps).
+    """
+    clean = [l for l in jd_lines[:40] if l.strip() and l.lower().strip() not in _JD_NOISE]
+
+    # 0) "About CompanyName" section header — most reliable signal
+    for line in clean:
+        m = re.match(r'^About\s+([A-Z][A-Za-z0-9&\- .,]{1,40}?)\s*$', line.strip())
+        if m:
+            name = m.group(1).strip()
+            if name.split()[0].lower() not in _ABOUT_FILLER:
+                return name
+
+    # 1) "Role at Company" in first 5 lines
     for line in clean[:5]:
         m = re.search(
             r'\bat\s+([A-Z][A-Za-z0-9& .,\-]{1,35}?)(?=\s*[,|–\-]|\s+(?:is|are|was|has|have)\b|$)',
             line,
         )
         if m:
-            s = _company_slug(m.group(1).strip())
-            if len(s) >= 2:
-                return s
+            name = m.group(1).strip()
+            if len(name) >= 2 and name.split()[0].lower() not in _JD_SKIP:
+                return name
 
-    # 2) "Company is/are/was/has..." at start of a line — catches "Capital One is..."
-    for line in clean[:12]:
+    # 2) Explicit label — "Company: Acme Corp" or "Employer: …"
+    for line in clean[:25]:
+        m = re.match(r'^(?:Company|Employer|Organization):\s*(.+)$', line.strip(), re.IGNORECASE)
+        if m:
+            return m.group(1).strip()
+
+    # 3) "CompanyName is/are/was/has/have …" at line start
+    for line in clean[:15]:
         m = re.match(r'^([A-Z][A-Za-z0-9& .,\-]{1,35}?)\s+(?:is|are|was|has|have)\b', line)
         if m:
             cand = m.group(1).strip()
             words = cand.split()
-            if 1 <= len(words) <= 4 and words[0].lower() not in SKIP:
-                s = _company_slug(cand)
-                if len(s) >= 3:
-                    return s
+            if 1 <= len(words) <= 4 and words[0].lower() not in _JD_SKIP:
+                return cand
 
-    # 3) Short standalone capitalized line (1–4 words)
+    # 4) Short capitalised line (1–3 words) that doesn't look like a title or location
     for line in clean[:10]:
         words = line.split()
-        if 1 <= len(words) <= 4 and words[0][0].isupper():
-            if words[0].lower() not in SKIP:
-                s = _company_slug(line)
-                if len(s) >= 2:
-                    return s
+        if 1 <= len(words) <= 3 and words[0][0].isupper():
+            if words[0].lower() not in _JD_SKIP:
+                # Reject "City, ST" patterns
+                if not re.search(r',\s*[A-Z]{2}\b', line):
+                    return line
 
-    # Fallback: first non-noise line
-    return _company_slug(clean[0]) if clean else "tailored"
+    return ""   # caller falls back
+
+
+def _slug_from_jd(jd_lines: list) -> str:
+    """Return a file-safe slug derived from the company name in the JD."""
+    name = _extract_company_name(jd_lines)
+    return _company_slug(name) if name else "tailored"
 
 
 def _condense_resume(data: dict) -> dict:
@@ -537,7 +583,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ── Tabs ──────────────────────────────────────────────────────────────────────
-tab_tailor, tab_history, tab_log = st.tabs(["✨ Tailor", "📁 History", "📋 Application Log"])
+tab_tailor, tab_history, tab_log, tab_prep = st.tabs(["✨ Tailor", "📁 History", "📋 Application Log", "🎤 Interview Prep"])
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -759,8 +805,8 @@ with tab_tailor:
         resume_data = _condense_resume(resume_data)
 
         jd_lines = [ln.strip() for ln in job_description.splitlines() if ln.strip()]
-        company_name = jd_lines[0][:40] if jd_lines else ""
-        slug = _slug_from_jd(jd_lines)
+        company_name = _extract_company_name(jd_lines) or (jd_lines[0][:40] if jd_lines else "")
+        slug = _company_slug(company_name) or "tailored"
 
         # Build files
         docx_bytes, pdf_bytes = None, None
@@ -789,7 +835,11 @@ with tab_tailor:
             "docx_bytes": docx_bytes,
             "pdf_bytes": pdf_bytes,
         }
-        st.session_state.history.insert(0, history_entry)
+        existing_idx = next((i for i, e in enumerate(st.session_state.history) if e["slug"] == slug), None)
+        if existing_idx is not None:
+            st.session_state.history[existing_idx] = history_entry
+        else:
+            st.session_state.history.insert(0, history_entry)
         _hist_meta = [
             {k: v for k, v in e.items() if k not in ("docx_bytes", "pdf_bytes")}
             for e in st.session_state.history
@@ -838,33 +888,43 @@ with tab_tailor:
                     mime="application/pdf",
                 )
 
-        # ── Add to log expander ───────────────────────────────────────────────
-        with st.expander("➕ Add to Application Log", expanded=False):
-            log_c1, log_c2 = st.columns(2)
-            with log_c1:
-                log_title    = st.text_input("Job Title", value=tr["job_title"], key="log_title")
-                log_company  = st.text_input("Company", value=company_name, key="log_company")
-                log_location = st.text_input("Location", placeholder="New York, NY", key="log_location")
-            with log_c2:
-                log_work_type = st.selectbox("Work Type", ["Hybrid", "Remote", "On-site"], key="log_work_type")
-                log_fit = st.number_input(
-                    "Fit %",
-                    min_value=0, max_value=100,
-                    value=tr["score"] or 0,
-                    key="log_fit",
+        # ── Mark as Applied ───────────────────────────────────────────────────
+        if not st.session_state.mark_applied_open:
+            if st.button("✓ Mark as Applied", type="primary", key="mark_applied_btn"):
+                st.session_state.mark_applied_open = True
+                st.rerun()
+        else:
+            st.markdown("**Save to Application Log**")
+            apply_c1, apply_c2 = st.columns(2)
+            with apply_c1:
+                apply_location = st.text_input(
+                    "Location", placeholder="New York, NY", key="apply_location"
                 )
-                log_date = st.date_input("Date Applied", value=datetime.today(), key="log_date")
-            if st.button("Add to Log", key="add_log_btn"):
-                st.session_state.app_log.append({
-                    "date": str(log_date),
-                    "job_title": log_title,
-                    "company": log_company,
-                    "location": log_location,
-                    "work_type": log_work_type,
-                    "fit_pct": log_fit,
-                })
-                _patch_saved(app_log=st.session_state.app_log)
-                st.success("Added to your Application Log!")
+            with apply_c2:
+                apply_work_type = st.selectbox(
+                    "Work Type", ["Hybrid", "Remote", "On-site"], key="apply_work_type"
+                )
+            btn_confirm_col, btn_cancel_col, _ = st.columns([1, 1, 2])
+            with btn_confirm_col:
+                if st.button("Confirm & Save", type="primary", key="apply_confirm_btn"):
+                    new_entry = {
+                        "date": datetime.today().strftime("%Y-%m-%d"),
+                        "job_title": tr["job_title"],
+                        "company": tr["company_name"] or tr["slug"],
+                        "location": apply_location,
+                        "work_type": apply_work_type,
+                        "fit_pct": tr["score"] or 0,
+                        "status": "Applied",
+                    }
+                    st.session_state.app_log.append(new_entry)
+                    _patch_saved(app_log=st.session_state.app_log)
+                    st.session_state.mark_applied_open = False
+                    st.success("Added to your Application Log ✓ — view it in the 📋 Application Log tab.")
+                    st.rerun()
+            with btn_cancel_col:
+                if st.button("Cancel", key="apply_cancel_btn"):
+                    st.session_state.mark_applied_open = False
+                    st.rerun()
 
         # ── Preview ───────────────────────────────────────────────────────────
         st.markdown("### Preview")
@@ -974,6 +1034,12 @@ with tab_log:
     st.markdown("### Application Log")
     st.caption("Track every job you apply to. Export as DOCX or CSV to save your records.")
 
+    _STATUS_OPTIONS = [
+        "Applied", "Phone Screen", "1st Interview",
+        "2nd Interview", "Final Round", "Verbal Offer",
+        "Offer Received", "Rejected", "No Response",
+    ]
+
     # ── Add entry manually ────────────────────────────────────────────────────
     with st.expander("➕ Add Entry Manually", expanded=False):
         m_c1, m_c2 = st.columns(2)
@@ -983,6 +1049,7 @@ with tab_log:
             m_location = st.text_input("Location", key="manual_location")
         with m_c2:
             m_work_type = st.selectbox("Work Type", ["Hybrid", "Remote", "On-site"], key="manual_work_type")
+            m_status = st.selectbox("Status", _STATUS_OPTIONS, key="manual_status")
             m_fit = st.number_input("Fit %", min_value=0, max_value=100, value=0, key="manual_fit")
             m_date = st.date_input("Date Applied", value=datetime.today(), key="manual_date")
         if st.button("Add Entry", key="manual_add_btn"):
@@ -994,6 +1061,7 @@ with tab_log:
                     "location": m_location,
                     "work_type": m_work_type,
                     "fit_pct": m_fit,
+                    "status": m_status,
                 })
                 _patch_saved(app_log=st.session_state.app_log)
                 st.success("Entry added!")
@@ -1004,13 +1072,38 @@ with tab_log:
     st.divider()
 
     if not st.session_state.app_log:
-        st.info("No applications logged yet. Add an entry above, or use the log expander after tailoring a resume.")
+        st.info("No applications logged yet. Add an entry above, or mark a tailored resume as applied.")
     else:
-        # Display table
+        # Migrate any entries missing status
+        for _e in st.session_state.app_log:
+            if "status" not in _e:
+                _e["status"] = "Applied"
+
+        # Display editable table
         import pandas as pd
         df = pd.DataFrame(st.session_state.app_log)
-        df.columns = ["Date", "Job Title", "Company", "Location", "Work Type", "Fit %"]
-        st.dataframe(df, use_container_width=True, hide_index=True)
+        if "status" not in df.columns:
+            df["status"] = "Applied"
+        _col_order = [c for c in ["date", "company", "job_title", "status", "location", "work_type", "fit_pct"] if c in df.columns]
+        df = df[_col_order]
+        edited_df = st.data_editor(
+            df,
+            column_config={
+                "date":      st.column_config.TextColumn("Date"),
+                "company":   st.column_config.TextColumn("Company"),
+                "job_title": st.column_config.TextColumn("Job Title"),
+                "status":    st.column_config.SelectboxColumn("Status", options=_STATUS_OPTIONS, required=True),
+                "location":  st.column_config.TextColumn("Location"),
+                "work_type": st.column_config.TextColumn("Work Type"),
+                "fit_pct":   st.column_config.NumberColumn("Fit %", min_value=0, max_value=100),
+            },
+            hide_index=True,
+            use_container_width=True,
+            key="log_editor",
+        )
+        if edited_df.to_dict("records") != st.session_state.app_log:
+            st.session_state.app_log = edited_df.to_dict("records")
+            _patch_saved(app_log=st.session_state.app_log)
 
         st.markdown("")
         exp_col1, exp_col2, _ = st.columns([1, 1, 2])
@@ -1046,3 +1139,159 @@ with tab_log:
             st.session_state.app_log = []
             _patch_saved(app_log=[])
             st.rerun()
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# TAB 4 — INTERVIEW PREP
+# ══════════════════════════════════════════════════════════════════════════════
+with tab_prep:
+    st.markdown("### Interview Prep")
+    st.caption("Generate realistic practice questions for any role and get scored AI feedback on your answers.")
+
+    if not api_key:
+        st.warning("Configure an AI provider in the sidebar to use Interview Prep.")
+    else:
+        # ── A) Job selector ───────────────────────────────────────────────────
+        st.markdown("#### Select a Job")
+        use_log_job = st.toggle("Pick from Application Log", value=bool(st.session_state.app_log), key="prep_use_log")
+
+        prep_company = ""
+        prep_role = ""
+
+        if use_log_job:
+            if st.session_state.app_log:
+                _job_labels = [
+                    f"{e.get('company', '?')} — {e.get('job_title', '?')}"
+                    for e in st.session_state.app_log
+                ]
+                _selected_label = st.selectbox("Select job", _job_labels, key="prep_job_select")
+                _selected_entry = st.session_state.app_log[_job_labels.index(_selected_label)]
+                prep_company = _selected_entry.get("company", "")
+                prep_role = _selected_entry.get("job_title", "")
+            else:
+                st.info("No jobs in your Application Log yet. Toggle off to enter manually.")
+
+        if not use_log_job or not st.session_state.app_log:
+            _pc1, _pc2 = st.columns(2)
+            with _pc1:
+                prep_company = st.text_input("Company", key="prep_company_manual")
+            with _pc2:
+                prep_role = st.text_input("Role / Job Title", key="prep_role_manual")
+
+        load_btn = st.button("Load Questions", type="primary", key="prep_load_btn")
+
+        if load_btn:
+            if not prep_company and not prep_role:
+                st.warning("Enter a company and/or role to generate questions.")
+            else:
+                with st.spinner("⚙️ SeArChInG iNtErViEw CoNtEnT... BeEp BoOp..."):
+                    web_ctx = search_interview_content(prep_company, prep_role)
+                with st.spinner("⚙️ GeNeRaTiNg QuEsTiOnS..."):
+                    try:
+                        qs = generate_questions(
+                            company=prep_company,
+                            role=prep_role,
+                            count=3,
+                            web_context=web_ctx,
+                            provider=_selected_cfg,
+                            api_key=api_key,
+                        )
+                        st.session_state.prep_questions = qs
+                        st.session_state.prep_job = {"company": prep_company, "role": prep_role}
+                        st.session_state.prep_chat = []
+                        st.session_state.prep_active_q = None
+                    except Exception as _e:
+                        st.error(f"Could not generate questions: {_e}")
+
+        # ── B/C) Question list ─────────────────────────────────────────────────
+        if st.session_state.prep_questions:
+            st.markdown("---")
+            _pj = st.session_state.prep_job
+            st.markdown(f"#### Questions — {_pj['role']} at {_pj['company']}")
+
+            for _qi, _q in enumerate(st.session_state.prep_questions):
+                _qc1, _qc2 = st.columns([5, 1])
+                with _qc1:
+                    st.markdown(
+                        f'<div class="history-card" style="margin-bottom:0.4rem">'
+                        f'<span style="color:#CC0000;font-family:\'Share Tech Mono\',monospace">Q{_qi + 1}.</span> {_q}'
+                        f"</div>",
+                        unsafe_allow_html=True,
+                    )
+                with _qc2:
+                    if st.button("Practice →", key=f"prep_q_{_qi}", use_container_width=True):
+                        st.session_state.prep_active_q = _q
+                        st.session_state.prep_chat = []
+                        st.rerun()
+
+            if st.button("Ask 3 More", key="prep_more_btn"):
+                with st.spinner("⚙️ GeNeRaTiNg MoRe QuEsTiOnS..."):
+                    try:
+                        _more = generate_questions(
+                            company=st.session_state.prep_job["company"],
+                            role=st.session_state.prep_job["role"],
+                            count=3,
+                            web_context="",
+                            provider=_selected_cfg,
+                            api_key=api_key,
+                        )
+                        st.session_state.prep_questions.extend(_more)
+                        st.rerun()
+                    except Exception as _e:
+                        st.error(f"Could not generate more questions: {_e}")
+
+        # ── D) Chat interface ──────────────────────────────────────────────────
+        if st.session_state.prep_active_q:
+            st.markdown("---")
+            st.markdown("#### Practice Session")
+
+            with st.chat_message("assistant"):
+                st.markdown(f"**{st.session_state.prep_active_q}**")
+
+            for _msg in st.session_state.prep_chat:
+                with st.chat_message(_msg["role"]):
+                    st.markdown(_msg["content"])
+                    if _msg.get("score") is not None:
+                        _sv = _msg["score"]
+                        _sc = _score_color(_sv)
+                        st.markdown(
+                            f'<span style="color:{_sc};font-size:1.05rem;font-weight:700">'
+                            f"Score: {_sv}/100</span>",
+                            unsafe_allow_html=True,
+                        )
+
+            _user_answer = st.chat_input("Type your answer...", key="prep_chat_input")
+            if _user_answer:
+                st.session_state.prep_chat.append({"role": "user", "content": _user_answer})
+                with st.spinner("⚙️ AnAlYzInG yOuR aNsWeR..."):
+                    try:
+                        _rating = rate_answer(
+                            company=st.session_state.prep_job["company"],
+                            role=st.session_state.prep_job["role"],
+                            question=st.session_state.prep_active_q,
+                            answer=_user_answer,
+                            provider=_selected_cfg,
+                            api_key=api_key,
+                        )
+                        _sv = _rating["score"]
+                        _sc = _score_color(_sv)
+                        _fb_md = (
+                            f"**Score: {_sv}/100**\n\n"
+                            f"{_rating['feedback']}"
+                        )
+                        if _rating["strengths"]:
+                            _fb_md += "\n\n**✅ Strengths:**\n" + "\n".join(
+                                f"- {s}" for s in _rating["strengths"]
+                            )
+                        if _rating["improvements"]:
+                            _fb_md += "\n\n**💡 Improvements:**\n" + "\n".join(
+                                f"- {s}" for s in _rating["improvements"]
+                            )
+                        st.session_state.prep_chat.append({
+                            "role": "assistant",
+                            "content": _fb_md,
+                            "score": _sv,
+                        })
+                        st.rerun()
+                    except Exception as _e:
+                        st.error(f"Could not rate answer: {_e}")

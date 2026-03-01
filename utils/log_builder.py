@@ -1,5 +1,7 @@
 # utils/log_builder.py — Export the application log as DOCX or CSV
 
+from __future__ import annotations
+
 import csv
 import io
 from docx import Document
