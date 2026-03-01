@@ -429,6 +429,12 @@ def _extract_job_title(jd_lines: list, resume_data: dict | None = None) -> str:
     Best-effort extraction of the target job title from JD lines.
     Falls back to the AI-derived most-recent title in resume_data.
     """
+    # 0) AI-provided target_role field (most reliable)
+    if resume_data:
+        _tr = (resume_data.get("target_role") or "").strip()
+        if _tr and len(_tr.split()) <= 8:
+            return _tr
+
     # 1) Explicit label: "Job Title: …" / "Position: …" / "Role: …"
     for line in jd_lines[:20]:
         m = re.match(
