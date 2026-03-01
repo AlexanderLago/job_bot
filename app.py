@@ -52,6 +52,22 @@ def _clear_saved() -> None:
     except Exception:
         pass
 
+
+def _save_master_resumes() -> None:
+    """Persist the full master resumes collection to disk."""
+    serialized = {}
+    for k, v in st.session_state.master_resumes.items():
+        serialized[k] = {
+            "name":      v["name"],
+            "text":      v["text"],
+            "bytes_b64": base64.b64encode(v["bytes"]).decode() if v["bytes"] else "",
+        }
+    _patch_saved(
+        master_resumes=serialized,
+        active_master_key=st.session_state.active_master_key,
+    )
+
+
 # ── Page config ───────────────────────────────────────────────────────────────
 st.set_page_config(
     page_title="Job Bot",
@@ -197,6 +213,10 @@ hr { border-color: #1a1a1a !important; }
 """, unsafe_allow_html=True)
 
 # ── Session state initialisation ──────────────────────────────────────────────
+if "master_resumes" not in st.session_state:
+    st.session_state.master_resumes = {}       # {filename: {name, text, bytes}}
+if "active_master_key" not in st.session_state:
+    st.session_state.active_master_key = ""
 if "master_resume_text" not in st.session_state:
     st.session_state.master_resume_text = ""
     st.session_state.master_resume_name = ""
@@ -244,11 +264,36 @@ if "salary_job_title" not in st.session_state:
 # ── Load persisted state from disk (runs once per session) ───────────────────
 if "fs_loaded" not in st.session_state:
     _saved = _load_saved()
-    if _saved.get("master_name") and not st.session_state.master_resume_name:
-        st.session_state.master_resume_name  = _saved["master_name"]
-        st.session_state.master_resume_text  = _saved.get("master_text", "")
-        _b64 = _saved.get("master_bytes", "")
-        st.session_state.master_resume_bytes = base64.b64decode(_b64) if _b64 else b""
+    # Load multi-resume collection
+    if _saved.get("master_resumes"):
+        for _k, _v in _saved["master_resumes"].items():
+            _b64 = _v.get("bytes_b64", "")
+            st.session_state.master_resumes[_k] = {
+                "name":  _v["name"],
+                "text":  _v.get("text", ""),
+                "bytes": base64.b64decode(_b64) if _b64 else b"",
+            }
+        _ak = _saved.get("active_master_key", "")
+        if _ak and _ak in st.session_state.master_resumes:
+            st.session_state.active_master_key = _ak
+        elif st.session_state.master_resumes:
+            st.session_state.active_master_key = list(st.session_state.master_resumes.keys())[0]
+        if st.session_state.active_master_key:
+            _mr = st.session_state.master_resumes[st.session_state.active_master_key]
+            st.session_state.master_resume_name  = _mr["name"]
+            st.session_state.master_resume_text  = _mr["text"]
+            st.session_state.master_resume_bytes = _mr["bytes"]
+    # Migrate old single-resume format
+    elif _saved.get("master_name") and not st.session_state.master_resume_name:
+        _name  = _saved["master_name"]
+        _text  = _saved.get("master_text", "")
+        _b64   = _saved.get("master_bytes", "")
+        _bytes = base64.b64decode(_b64) if _b64 else b""
+        st.session_state.master_resumes[_name]   = {"name": _name, "text": _text, "bytes": _bytes}
+        st.session_state.active_master_key        = _name
+        st.session_state.master_resume_name       = _name
+        st.session_state.master_resume_text       = _text
+        st.session_state.master_resume_bytes      = _bytes
     if not st.session_state.app_log:
         st.session_state.app_log = _saved.get("app_log", [])
     if not st.session_state.history:
@@ -509,32 +554,76 @@ with st.sidebar:
     st.markdown("## ⚙️ Settings")
     st.divider()
 
-    # Master resume
-    st.markdown("**📄 Master Resume**")
-    st.caption("Upload once — reuse across all tailoring sessions.")
-    master_file = st.file_uploader(
-        label="Upload master resume",
-        type=["pdf", "docx", "txt"],
-        label_visibility="collapsed",
-        key="master_uploader",
-    )
-    if master_file:
-        raw = master_file.read()
-        try:
-            parsed = parse_resume(raw, master_file.name)
-            st.session_state.master_resume_bytes = raw
-            st.session_state.master_resume_name = master_file.name
-            st.session_state.master_resume_text = parsed
-            _patch_saved(
-                master_name  = st.session_state.master_resume_name,
-                master_text  = st.session_state.master_resume_text,
-                master_bytes = base64.b64encode(raw).decode(),
-            )
-            st.success(f"✅ {master_file.name}")
-        except Exception as e:
-            st.error(f"Could not read master resume: {e}")
-    elif st.session_state.master_resume_name:
-        st.success(f"✅ {st.session_state.master_resume_name}")
+    # Master resumes
+    _MAX_MASTERS = 5
+    st.markdown("**📄 Master Resumes**")
+    st.caption(f"Store up to {_MAX_MASTERS} — toggle the active one below.")
+
+    _mrs = st.session_state.master_resumes
+    if _mrs:
+        _mr_keys = list(_mrs.keys())
+        _active_idx = _mr_keys.index(st.session_state.active_master_key) \
+            if st.session_state.active_master_key in _mr_keys else 0
+        _chosen_key = st.radio(
+            "active_master_radio",
+            _mr_keys,
+            index=_active_idx,
+            format_func=lambda k: (_mrs[k]["name"][:30] + "…") if len(_mrs[k]["name"]) > 30 else _mrs[k]["name"],
+            label_visibility="collapsed",
+        )
+        # Switch active resume
+        if _chosen_key != st.session_state.active_master_key:
+            st.session_state.active_master_key   = _chosen_key
+            _mr = _mrs[_chosen_key]
+            st.session_state.master_resume_text  = _mr["text"]
+            st.session_state.master_resume_name  = _mr["name"]
+            st.session_state.master_resume_bytes = _mr["bytes"]
+            _patch_saved(active_master_key=_chosen_key)
+            st.rerun()
+        if st.button("✕ Remove selected", key="remove_master_btn"):
+            del st.session_state.master_resumes[_chosen_key]
+            if st.session_state.master_resumes:
+                _new_key = list(st.session_state.master_resumes.keys())[0]
+                st.session_state.active_master_key   = _new_key
+                _mr = st.session_state.master_resumes[_new_key]
+                st.session_state.master_resume_text  = _mr["text"]
+                st.session_state.master_resume_name  = _mr["name"]
+                st.session_state.master_resume_bytes = _mr["bytes"]
+            else:
+                st.session_state.active_master_key   = ""
+                st.session_state.master_resume_text  = ""
+                st.session_state.master_resume_name  = ""
+                st.session_state.master_resume_bytes = b""
+            _save_master_resumes()
+            st.rerun()
+
+    if len(_mrs) < _MAX_MASTERS:
+        _upload_label = "Add another resume" if _mrs else "Upload master resume"
+        st.caption(_upload_label)
+        master_file = st.file_uploader(
+            label=_upload_label,
+            type=["pdf", "docx", "txt"],
+            label_visibility="collapsed",
+            key="master_uploader",
+        )
+        if master_file:
+            raw = master_file.read()
+            try:
+                parsed = parse_resume(raw, master_file.name)
+                _key = master_file.name
+                st.session_state.master_resumes[_key] = {
+                    "name": master_file.name, "text": parsed, "bytes": raw,
+                }
+                st.session_state.active_master_key   = _key
+                st.session_state.master_resume_text  = parsed
+                st.session_state.master_resume_name  = master_file.name
+                st.session_state.master_resume_bytes = raw
+                _save_master_resumes()
+                st.success(f"✅ {master_file.name}")
+            except Exception as e:
+                st.error(f"Could not read resume: {e}")
+    else:
+        st.caption("5/5 slots used — remove one to add another.")
 
     st.divider()
 
@@ -684,6 +773,8 @@ with st.sidebar:
     st.markdown("**🗑️ Saved Data**")
     if st.button("Clear all saved data", type="secondary"):
         _clear_saved()
+        st.session_state.master_resumes      = {}
+        st.session_state.active_master_key   = ""
         st.session_state.master_resume_name  = ""
         st.session_state.master_resume_text  = ""
         st.session_state.master_resume_bytes = b""
