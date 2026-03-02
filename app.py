@@ -1119,7 +1119,11 @@ with tab_tailor:
         resume_data = _condense_resume(resume_data)
 
         jd_lines = [ln.strip() for ln in job_description.splitlines() if ln.strip()]
-        company_name = _extract_company_name(jd_lines) or (jd_lines[0][:40] if jd_lines else "")
+        company_name = (
+            resume_data.get("company_name", "").strip()
+            or _extract_company_name(jd_lines)
+            or (jd_lines[0][:40] if jd_lines else "")
+        )
         slug = _company_slug(company_name) or "tailored"
 
         # Build files

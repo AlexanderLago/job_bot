@@ -93,7 +93,8 @@ OUTPUT FORMAT — return ONLY valid JSON, no markdown, no explanation, just the 
   "skills": ["Skill 1", "Skill 2", "Skill 3"],
   "certifications": ["Certification 1"],
   "keywords_added": ["keyword1", "keyword2"],
-  "target_role": "The exact job title being applied for, as stated in the job description (e.g. 'Senior Data Analyst', 'Software Engineer II'). 2-6 words max."
+  "target_role": "The exact job title being applied for, as stated in the job description (e.g. 'Senior Data Analyst', 'Software Engineer II'). 2-6 words max.",
+  "company_name": "The hiring company or organization name, exactly as it appears in the job description. Empty string if not found."
 }"""
 
 
