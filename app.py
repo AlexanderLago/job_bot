@@ -791,6 +791,17 @@ with st.sidebar:
 
     st.divider()
 
+    preserve_structure = st.toggle(
+        "🔒 Preserve my structure & formatting",
+        value=False,
+        help="When ON: adds ATS keywords and surfaces implied skills, but does NOT reorder, "
+             "restructure, or rewrite your bullets. Good for people who like their current layout.",
+    )
+    if preserve_structure:
+        st.caption("Keywords & implied skills will be added, but your layout stays as-is.")
+
+    st.divider()
+
     output_format = st.radio(
         "Output format",
         ["DOCX + PDF", "DOCX only", "PDF only"],
@@ -1079,7 +1090,8 @@ with tab_tailor:
             st.stop()
 
         # Call AI provider (with automatic fallback on rate limit + caching)
-        _tailor_ck = hashlib.md5(f"tailor||{resume_text}||{job_description}||{temperature:.2f}".encode()).hexdigest()
+        _ps_flag = "1" if preserve_structure else "0"
+        _tailor_ck = hashlib.md5(f"tailor||{resume_text}||{job_description}||{temperature:.2f}||ps{_ps_flag}".encode()).hexdigest()
         if _tailor_ck in st.session_state.result_cache:
             resume_data = st.session_state.result_cache[_tailor_ck]
             used = _selected_cfg
@@ -1090,7 +1102,7 @@ with tab_tailor:
                 try:
                     resume_data, used = _call_with_fallback(
                         call_tailor, _available, _all_keys, _selected_cfg,
-                        resume_text, job_description, temperature,
+                        resume_text, job_description, temperature, preserve_structure,
                     )
                     if used["id"] != provider:
                         st.info(f"Switched to {used['label']} (primary was rate limited)")
@@ -1155,6 +1167,40 @@ with tab_tailor:
 
                 _before = _orig_score_result.get("score", 0)
                 _after  = _tail_score_result.get("score", 0)
+
+                # Auto-retry with higher temperature if ATS score didn't improve
+                if _after <= _before and not preserve_structure:
+                    _boost_temp = min(temperature + 0.3, 0.9)
+                    try:
+                        with st.spinner("⚙️ ScOrE dIdN'T iMpRoVe — ReRuNnInG wItH aTsBoOsT..."):
+                            _retry_data, _ = _call_with_fallback(
+                                call_tailor, _available, _all_keys, _selected_cfg,
+                                resume_text, job_description, _boost_temp, preserve_structure,
+                            )
+                            _retry_data = _condense_resume(_retry_data)
+                            _retry_text = _resume_data_to_text(_retry_data)
+                            _retry_score_result, _ = _call_with_fallback(
+                                call_score, _available, _all_keys, _selected_cfg,
+                                _retry_text, job_description,
+                            )
+                            _retry_score = _retry_score_result.get("score", 0)
+                            if _retry_score > _after:
+                                resume_data = _retry_data
+                                _after = _retry_score
+                                # Rebuild files with the improved result
+                                if output_format in ("DOCX + PDF", "DOCX only"):
+                                    try:
+                                        docx_bytes = build_docx(resume_data)
+                                    except Exception:
+                                        pass
+                                if output_format in ("DOCX + PDF", "PDF only"):
+                                    try:
+                                        pdf_bytes = build_pdf(resume_data)
+                                    except Exception:
+                                        pass
+                    except Exception:
+                        pass  # retry is non-critical
+
                 st.session_state.tailor_improvement = {
                     "before": _before,
                     "after":  _after,

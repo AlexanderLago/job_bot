@@ -178,17 +178,27 @@ def _parse_json(raw: str) -> dict:
         raise ValueError(f"AI returned invalid JSON: {e}\n\nRaw output:\n{raw[:500]}")
 
 
-def _tailor_user_msg(resume_text: str, jd: str, temperature: float) -> str:
+def _tailor_user_msg(resume_text: str, jd: str, temperature: float, preserve_structure: bool = False) -> str:
     tone = (
         "be conservative, stay close to original language" if temperature < 0.4
         else "be creative with rewording and verb choices" if temperature > 0.6
         else "balanced rewording"
     )
+    ps_block = (
+        "\n\nSTRUCTURE PRESERVATION MODE IS ACTIVE — this overrides restructuring guidance:\n"
+        "- Do NOT change the order of sections, jobs, or bullet points\n"
+        "- Do NOT add or remove bullet points — only rephrase existing ones in place\n"
+        "- Keep the summary the same length and general structure as the original\n"
+        "- You MAY add implied skills and new entries to the Skills section\n"
+        "- Weave keywords into existing bullets only where natural, without changing bullet count or order\n"
+        "- Preserve the candidate's voice and phrasing as much as possible\n"
+    ) if preserve_structure else ""
     return (
         f"Here is the candidate's current resume:\n\n<resume>\n{resume_text}\n</resume>\n\n"
         f"Here is the job description to tailor the resume for:\n\n"
         f"<job_description>\n{jd}\n</job_description>\n\n"
-        f"Temperature setting: {temperature:.2f} ({tone})\n\n"
+        f"Temperature setting: {temperature:.2f} ({tone})"
+        f"{ps_block}\n\n"
         "Please tailor this resume following all rules in your instructions. "
         "Return ONLY the JSON object, nothing else."
     )
@@ -237,14 +247,15 @@ def _call_oai(base_url: str, api_key: str, model: str, system: str, user: str,
 
 # ── Public API ─────────────────────────────────────────────────────────────────
 
-def call_tailor(provider: dict, api_key: str, resume_text: str, jd: str, temperature: float) -> dict:
+def call_tailor(provider: dict, api_key: str, resume_text: str, jd: str, temperature: float,
+                preserve_structure: bool = False) -> dict:
     """Tailor the resume using the given provider. Raises ProviderRateLimitError on 429."""
     t = provider["type"]
 
     if t == "anthropic":
         from utils.ai_tailor import tailor_resume
         try:
-            return tailor_resume(resume_text, jd, api_key, temperature)
+            return tailor_resume(resume_text, jd, api_key, temperature, preserve_structure)
         except Exception as e:
             if _should_skip(e):
                 raise ProviderRateLimitError(str(e))
@@ -253,7 +264,7 @@ def call_tailor(provider: dict, api_key: str, resume_text: str, jd: str, tempera
     if t == "gemini":
         from utils.gemini_tailor import tailor_resume_gemini
         try:
-            return tailor_resume_gemini(resume_text, jd, api_key, temperature)
+            return tailor_resume_gemini(resume_text, jd, api_key, temperature, preserve_structure)
         except Exception as e:
             if _should_skip(e):
                 raise ProviderRateLimitError(str(e))
@@ -266,7 +277,7 @@ def call_tailor(provider: dict, api_key: str, resume_text: str, jd: str, tempera
             api_key=api_key,
             model=provider["model"],
             system=SYSTEM_PROMPT,
-            user=_tailor_user_msg(resume_text, jd, temperature),
+            user=_tailor_user_msg(resume_text, jd, temperature, preserve_structure),
             temperature=temperature,
             max_tokens=4096,
         )
