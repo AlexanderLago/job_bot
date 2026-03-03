@@ -25,11 +25,11 @@ PROVIDERS = [
     },
     {
         "id": "gemini15",
-        "label": "Gemini 1.5 Flash",
+        "label": "Gemini 2.5 Flash Lite",
         "key_name": "GEMINI_API_KEY",          # same key, separate rate limit pool
         "type": "oai",
         "base_url": "https://generativelanguage.googleapis.com/v1beta/openai/",
-        "model": "gemini-1.5-flash-002",
+        "model": "gemini-2.5-flash-lite",
         "free": True,
         "signup_url": "https://aistudio.google.com/app/apikey",
     },
@@ -240,6 +240,7 @@ def _should_skip(exc: Exception) -> bool:
     msg = str(exc).lower()
     return any(x in msg for x in (
         "429", "rate_limit", "rate limit", "resource_exhausted", "quota",   # rate limits
+        "503", "unavailable", "high demand", "service unavailable",         # overload / Gemini 503
         "404", "not found", "not_found", "no such model", "does not exist", # bad model/endpoint
         "401", "403", "unauthorized", "invalid api key", "invalid_api_key", # auth failures
         "authentication", "forbidden", "permission denied",
