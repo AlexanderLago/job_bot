@@ -45,11 +45,11 @@ PROVIDERS = [
     },
     {
         "id": "cerebras",
-        "label": "Llama 3.3 70B · Cerebras",
+        "label": "GPT-OSS 120B · Cerebras",
         "key_name": "CEREBRAS_API_KEY",
         "type": "oai",
         "base_url": "https://api.cerebras.ai/v1",
-        "model": "llama-3.3-70b",
+        "model": "gpt-oss-120b",
         "free": True,
         "signup_url": "https://inference.cerebras.ai/",
     },
@@ -76,11 +76,11 @@ PROVIDERS = [
     },
     {
         "id": "zhipu",
-        "label": "GLM-4-Flash · Zhipu AI (z.ai)",
+        "label": "GLM-4.5-Flash · Zhipu AI (z.ai)",
         "key_name": "ZHIPU_API_KEY",
         "type": "oai",
         "base_url": "https://open.bigmodel.cn/api/paas/v4/",
-        "model": "glm-4-flash",
+        "model": "glm-4.5-flash",
         "free": True,
         "signup_url": "https://z.ai/",
     },
@@ -223,13 +223,17 @@ def _should_skip(exc: Exception) -> bool:
         "404", "not found", "not_found", "no such model", "does not exist", # bad model/endpoint
         "401", "403", "unauthorized", "invalid api key", "invalid_api_key", # auth failures
         "authentication", "forbidden", "permission denied",
+        "timeout", "timed out", "connecttimeout", "connection error",       # network failures
     ))
 
 
 def _call_oai(base_url: str, api_key: str, model: str, system: str, user: str,
                temperature: float, max_tokens: int, extra_headers: dict = None) -> str:
     """Make an OpenAI-compatible chat completion request."""
-    from openai import OpenAI, RateLimitError as OAIRateLimitError, NotFoundError as OAINotFoundError
+    from openai import (OpenAI, RateLimitError as OAIRateLimitError,
+                        NotFoundError as OAINotFoundError,
+                        APITimeoutError as OAITimeoutError,
+                        APIConnectionError as OAIConnError)
     client = OpenAI(api_key=api_key, base_url=base_url,
                     default_headers=extra_headers or {})
     try:
@@ -243,7 +247,7 @@ def _call_oai(base_url: str, api_key: str, model: str, system: str, user: str,
             max_tokens=max_tokens,
         )
         return resp.choices[0].message.content or ""
-    except (OAIRateLimitError, OAINotFoundError) as e:
+    except (OAIRateLimitError, OAINotFoundError, OAITimeoutError, OAIConnError) as e:
         raise ProviderRateLimitError(str(e))
     except Exception as e:
         if _should_skip(e):
