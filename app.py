@@ -494,7 +494,12 @@ def _resume_data_to_text(data: dict) -> str:
     for edu in data.get("education", []):
         lines.append(f"{edu.get('degree', '')} — {edu.get('school', '')}")
     if data.get("skills"):
-        lines.append("Skills: " + ", ".join(data["skills"]))
+        skills = data["skills"]
+        if isinstance(skills, dict):
+            for cat, items in skills.items():
+                lines.append(f"{cat}: " + ", ".join(str(s) for s in items))
+        else:
+            lines.append("Skills: " + ", ".join(str(s) for s in skills))
     if data.get("certifications"):
         lines.append("Certifications: " + ", ".join(data["certifications"]))
     return "\n".join(lines)
@@ -1528,7 +1533,12 @@ with tab_tailor:
 
         if resume_data.get("skills"):
             st.markdown("**SKILLS**")
-            st.markdown(", ".join(resume_data["skills"]))
+            skills = resume_data["skills"]
+            if isinstance(skills, dict):
+                for cat, items in skills.items():
+                    st.markdown(f"**{cat}:** {', '.join(str(s) for s in items)}")
+            else:
+                st.markdown(", ".join(str(s) for s in skills))
             st.divider()
 
         keywords = resume_data.get("keywords_added", [])

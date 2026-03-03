@@ -72,6 +72,29 @@ TEMPERATURE GUIDANCE:
 - At high temperature: bolder rewording, stronger verbs, more dynamic framing
 - In either case: NEVER fabricate. In either case: ALWAYS surface implied skills and optimize keywords.
 
+SKILLS CATEGORIZATION (group skills by category — do NOT output a flat list):
+- Use 3–4 categories relevant to the role. Recommended categories for data roles:
+    • "Languages" — Python, R, SQL, Scala, etc.
+    • "Analytics & BI" — Tableau, Power BI, Looker, Excel, Google Data Studio, etc.
+    • "Libraries & Frameworks" — pandas, NumPy, scikit-learn, TensorFlow, PySpark, etc.
+    • "Platforms & Tools" — AWS, GCP, Snowflake, BigQuery, dbt, Airflow, Git, etc.
+    • "Statistical Methods" — A/B testing, regression, forecasting, hypothesis testing, etc.
+- Only include a category if the candidate has at least 2 genuine skills in it
+- Tailor category names to the specific role (e.g. "Machine Learning" for ML-heavy roles)
+- Skills must be genuine — only include what the candidate actually has
+
+ONE-PAGE FIT RULES (the final resume MUST fit on one printed page — no exceptions):
+- Summary: 2–3 sentences maximum; each sentence under 25 words; keep it dense, not padded
+- Bullets per role (scale down as roles increase):
+    • 1 experience role: up to 6 bullets
+    • 2 roles: up to 5 bullets each
+    • 3 roles: up to 4 bullets each
+    • 4+ roles: up to 3 bullets each; drop the least-relevant role entirely if needed
+- Each bullet should fit on 1 line (~90 characters); avoid wrapping bullets onto 3 lines
+- Skills: 3–4 categories, max 5 skills per category (~15 skills total); most relevant first
+- Education details: one line only (GPA or honors if impressive, else leave empty string)
+- These limits are hard constraints — prioritize quality over quantity
+
 OUTPUT FORMAT — return ONLY valid JSON, no markdown, no explanation, just the JSON object:
 {
   "name": "Full Name",
@@ -80,7 +103,7 @@ OUTPUT FORMAT — return ONLY valid JSON, no markdown, no explanation, just the 
   "location": "City, State (or City, State, ZIP)",
   "linkedin": "LinkedIn URL or empty string",
   "website": "personal website or empty string",
-  "summary": "3-4 sentence professional summary tailored to this specific job and company",
+  "summary": "2-3 sentence professional summary tailored to this specific job and company",
   "experience": [
     {
       "title": "Job Title",
@@ -99,10 +122,15 @@ OUTPUT FORMAT — return ONLY valid JSON, no markdown, no explanation, just the 
       "school": "School Name",
       "location": "City, State",
       "dates": "Year or Year - Year",
-      "details": "GPA / honors / relevant coursework if present, else empty string"
+      "details": "GPA / honors if noteworthy, else empty string"
     }
   ],
-  "skills": ["Skill 1", "Skill 2", "Skill 3"],
+  "skills": {
+    "Languages": ["Python", "SQL"],
+    "Analytics & BI": ["Tableau", "Power BI"],
+    "Libraries & Frameworks": ["pandas", "scikit-learn"],
+    "Platforms & Tools": ["AWS", "Snowflake"]
+  },
   "certifications": ["Certification 1"],
   "keywords_added": ["keyword1", "keyword2"],
   "target_role": "The exact job title being applied for, as stated in the job description (e.g. 'Senior Data Analyst', 'Software Engineer II'). 2-6 words max.",

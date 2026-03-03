@@ -1,6 +1,7 @@
 # utils/pdf_builder.py — Build an ATS-friendly PDF resume using ReportLab
 
 import io
+from xml.sax.saxutils import escape
 from reportlab.lib.pagesizes import letter
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import inch
@@ -10,6 +11,16 @@ from reportlab.platypus import (
     Table, TableStyle,
 )
 from reportlab.lib.enums import TA_CENTER, TA_LEFT
+
+
+class _SectionGap(Spacer):
+    """Elastic spacer placed between resume sections.
+    After the full story is built, _stretch_gaps() redistributes remaining
+    page space evenly across all gap instances so the resume fills the page
+    without overflowing.
+    """
+    BASE = 5    # minimum gap height (points)
+    MAX_ADD = 18  # max extra points added per gap
 
 BRAND_COLOR = colors.HexColor("#4F46E5")
 DARK_GRAY = colors.HexColor("#444444")
@@ -37,7 +48,7 @@ def _styles():
         "section", parent=base["Normal"],
         fontSize=11, fontName="Helvetica-Bold",
         textColor=BRAND_COLOR, alignment=TA_LEFT,
-        spaceBefore=5, spaceAfter=1,
+        spaceBefore=2, spaceAfter=1,
     )
     custom["job_title"] = ParagraphStyle(
         "job_title", parent=base["Normal"],
@@ -66,6 +77,11 @@ def _styles():
         textColor=BLACK, spaceAfter=0, leading=12,
         leftIndent=12, bulletIndent=0,
     )
+    custom["skill_cat"] = ParagraphStyle(
+        "skill_cat", parent=base["Normal"],
+        fontSize=10, fontName="Helvetica",
+        textColor=BLACK, spaceAfter=1, leading=13,
+    )
     return custom
 
 
@@ -74,6 +90,40 @@ _RIGHT_MARGIN = 0.75 * inch
 _TOP_MARGIN = 0.5 * inch
 _BOTTOM_MARGIN = 0.5 * inch
 _USABLE_WIDTH = letter[0] - _LEFT_MARGIN - _RIGHT_MARGIN
+_USABLE_HEIGHT = letter[1] - _TOP_MARGIN - _BOTTOM_MARGIN
+
+
+def _flowable_height(f) -> float:
+    """Return total rendered height of a flowable including its style spacing."""
+    try:
+        _, h = f.wrap(_USABLE_WIDTH, _USABLE_HEIGHT)
+    except Exception:
+        h = 0
+    style = getattr(f, "style", None)
+    if style:
+        h += getattr(style, "spaceBefore", 0) + getattr(style, "spaceAfter", 0)
+    else:
+        h += getattr(f, "spaceBefore", 0) + getattr(f, "spaceAfter", 0)
+    return float(h)
+
+
+def _stretch_gaps(story: list) -> None:
+    """Measure total story height and grow _SectionGap spacers to fill the page.
+
+    Extra space is distributed evenly across all gaps, capped at MAX_ADD per gap
+    so the spacing stays tasteful.  If content is already near-full, gaps stay at BASE.
+    """
+    gap_indices = [i for i, f in enumerate(story) if isinstance(f, _SectionGap)]
+    if not gap_indices:
+        return
+
+    total_h = sum(_flowable_height(f) for f in story)
+    remaining = _USABLE_HEIGHT - total_h
+
+    if remaining > 2:
+        extra = min(remaining / len(gap_indices), _SectionGap.MAX_ADD)
+        for idx in gap_indices:
+            story[idx] = _SectionGap(1, _SectionGap.BASE + extra)
 
 
 def _meta_row(left_text: str, dates: str, styles: dict):
@@ -129,13 +179,28 @@ def build_pdf(data: dict) -> bytes:
     # ── Summary ───────────────────────────────────────────────────────────────
     summary = data.get("summary", "")
     if summary:
+        story.append(_SectionGap(1, _SectionGap.BASE))
         story.append(Paragraph("PROFESSIONAL SUMMARY", S["section"]))
         story.append(HRFlowable(width="100%", thickness=1, color=BRAND_COLOR, spaceAfter=2))
         story.append(Paragraph(summary, S["body"]))
 
+    # ── Skills ────────────────────────────────────────────────────────────────
+    skills = data.get("skills", {})
+    if skills:
+        story.append(_SectionGap(1, _SectionGap.BASE))
+        story.append(Paragraph("SKILLS", S["section"]))
+        story.append(HRFlowable(width="100%", thickness=1, color=BRAND_COLOR, spaceAfter=2))
+        if isinstance(skills, dict):
+            for cat, items in skills.items():
+                line = f"<b>{escape(cat)}:</b>  {escape(', '.join(str(s) for s in items))}"
+                story.append(Paragraph(line, S["skill_cat"]))
+        else:
+            story.append(Paragraph(", ".join(str(s) for s in skills), S["body"]))
+
     # ── Experience ────────────────────────────────────────────────────────────
     experience = data.get("experience", [])
     if experience:
+        story.append(_SectionGap(1, _SectionGap.BASE))
         story.append(Paragraph("EXPERIENCE", S["section"]))
         story.append(HRFlowable(width="100%", thickness=1, color=BRAND_COLOR, spaceAfter=2))
         for job in experience:
@@ -151,6 +216,7 @@ def build_pdf(data: dict) -> bytes:
     # ── Education ─────────────────────────────────────────────────────────────
     education = data.get("education", [])
     if education:
+        story.append(_SectionGap(1, _SectionGap.BASE))
         story.append(Paragraph("EDUCATION", S["section"]))
         story.append(HRFlowable(width="100%", thickness=1, color=BRAND_COLOR, spaceAfter=2))
         for edu in education:
@@ -163,20 +229,17 @@ def build_pdf(data: dict) -> bytes:
             if edu.get("details"):
                 story.append(Paragraph(edu["details"], S["body"]))
 
-    # ── Skills ────────────────────────────────────────────────────────────────
-    skills = data.get("skills", [])
-    if skills:
-        story.append(Paragraph("SKILLS", S["section"]))
-        story.append(HRFlowable(width="100%", thickness=1, color=BRAND_COLOR, spaceAfter=2))
-        story.append(Paragraph(", ".join(skills), S["body"]))
-
     # ── Certifications ────────────────────────────────────────────────────────
     certs = data.get("certifications", [])
     if certs:
+        story.append(_SectionGap(1, _SectionGap.BASE))
         story.append(Paragraph("CERTIFICATIONS", S["section"]))
         story.append(HRFlowable(width="100%", thickness=1, color=BRAND_COLOR, spaceAfter=2))
         for cert in certs:
             story.append(Paragraph(f"• {cert}", S["bullet"]))
+
+    # Distribute remaining page space evenly across section gaps
+    _stretch_gaps(story)
 
     doc.build(story)
     buf.seek(0)
