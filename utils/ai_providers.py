@@ -159,16 +159,6 @@ PROVIDERS = [
         "signup_url": "https://app.hyperbolic.xyz/",
     },
     {
-        "id": "deepseek",
-        "label": "DeepSeek V3 · DeepSeek",
-        "key_name": "DEEPSEEK_API_KEY",
-        "type": "oai",
-        "base_url": "https://api.deepseek.com/v1",
-        "model": "deepseek-chat",
-        "free": True,
-        "signup_url": "https://platform.deepseek.com/",
-    },
-    {
         "id": "nvidia",
         "label": "Llama 3.3 70B · NVIDIA NIM",
         "key_name": "NVIDIA_API_KEY",
