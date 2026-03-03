@@ -45,11 +45,11 @@ PROVIDERS = [
     },
     {
         "id": "cerebras",
-        "label": "Llama 3.1 70B · Cerebras",
+        "label": "Llama 3.3 70B · Cerebras",
         "key_name": "CEREBRAS_API_KEY",
         "type": "oai",
         "base_url": "https://api.cerebras.ai/v1",
-        "model": "llama3.1-70b",
+        "model": "llama-3.3-70b",
         "free": True,
         "signup_url": "https://inference.cerebras.ai/",
     },
@@ -72,6 +72,7 @@ PROVIDERS = [
         "model": "meta-llama/llama-3.3-70b-instruct:free",
         "free": True,
         "signup_url": "https://openrouter.ai/keys",
+        "extra_headers": {"HTTP-Referer": "https://github.com/AlexanderLago/job_bot", "X-Title": "Job Bot"},
     },
     {
         "id": "zhipu",
@@ -93,6 +94,7 @@ PROVIDERS = [
         "model": "google/gemma-3-27b-it:free",
         "free": True,
         "signup_url": "https://openrouter.ai/keys",
+        "extra_headers": {"HTTP-Referer": "https://github.com/AlexanderLago/job_bot", "X-Title": "Job Bot"},
     },
     {
         "id": "openrouter3",
@@ -103,25 +105,26 @@ PROVIDERS = [
         "model": "mistralai/mistral-7b-instruct:free",
         "free": True,
         "signup_url": "https://openrouter.ai/keys",
+        "extra_headers": {"HTTP-Referer": "https://github.com/AlexanderLago/job_bot", "X-Title": "Job Bot"},
     },
     # ── Additional free-tier providers ────────────────────────────────────────
     {
         "id": "together",
-        "label": "Llama 3.1 70B · Together AI",
+        "label": "Llama 3.3 70B · Together AI",
         "key_name": "TOGETHER_API_KEY",
         "type": "oai",
         "base_url": "https://api.together.xyz/v1",
-        "model": "meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo",
+        "model": "meta-llama/Llama-3.3-70B-Instruct-Turbo-Free",
         "free": True,
         "signup_url": "https://api.together.xyz/",
     },
     {
         "id": "mistral",
-        "label": "Mistral 7B · Mistral AI",
+        "label": "Mistral Nemo · Mistral AI",
         "key_name": "MISTRAL_API_KEY",
         "type": "oai",
         "base_url": "https://api.mistral.ai/v1",
-        "model": "open-mistral-7b",
+        "model": "open-mistral-nemo",
         "free": True,
         "signup_url": "https://console.mistral.ai/",
     },
@@ -216,16 +219,19 @@ def _should_skip(exc: Exception) -> bool:
     """Return True for any error that means we should skip to the next provider."""
     msg = str(exc).lower()
     return any(x in msg for x in (
-        "429", "rate_limit", "rate limit", "resource_exhausted", "quota",  # rate limits
-        "404", "not found", "not_found", "no such model", "does not exist",  # bad model/endpoint
+        "429", "rate_limit", "rate limit", "resource_exhausted", "quota",   # rate limits
+        "404", "not found", "not_found", "no such model", "does not exist", # bad model/endpoint
+        "401", "403", "unauthorized", "invalid api key", "invalid_api_key", # auth failures
+        "authentication", "forbidden", "permission denied",
     ))
 
 
 def _call_oai(base_url: str, api_key: str, model: str, system: str, user: str,
-               temperature: float, max_tokens: int) -> str:
+               temperature: float, max_tokens: int, extra_headers: dict = None) -> str:
     """Make an OpenAI-compatible chat completion request."""
     from openai import OpenAI, RateLimitError as OAIRateLimitError, NotFoundError as OAINotFoundError
-    client = OpenAI(api_key=api_key, base_url=base_url)
+    client = OpenAI(api_key=api_key, base_url=base_url,
+                    default_headers=extra_headers or {})
     try:
         resp = client.chat.completions.create(
             model=model,
@@ -280,6 +286,7 @@ def call_tailor(provider: dict, api_key: str, resume_text: str, jd: str, tempera
             user=_tailor_user_msg(resume_text, jd, temperature, preserve_structure),
             temperature=temperature,
             max_tokens=4096,
+            extra_headers=provider.get("extra_headers"),
         )
         return _parse_json(raw)
 
@@ -318,6 +325,7 @@ def call_score(provider: dict, api_key: str, resume_text: str, jd: str) -> dict:
             user=_score_user_msg(resume_text, jd),
             temperature=0.1,
             max_tokens=1024,
+            extra_headers=provider.get("extra_headers"),
         )
         return _parse_json(raw)
 

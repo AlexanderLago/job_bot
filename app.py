@@ -234,6 +234,8 @@ if "tailor_result" not in st.session_state:
     st.session_state.tailor_result = None
 if "tailor_improvement" not in st.session_state:
     st.session_state.tailor_improvement = None  # {before, after, delta}
+if "market_intel" not in st.session_state:
+    st.session_state.market_intel = None        # {role, jds_count, frequencies, have, missing, onet}
 if "rate_limited_providers" not in st.session_state:
     st.session_state.rate_limited_providers = set()
 if "rl_until" not in st.session_state:
@@ -312,6 +314,11 @@ if "fs_loaded" not in st.session_state:
         st.session_state["ukey_ADZUNA_APP_ID"] = _saved.get("adzuna_app_id", "")
     if "ukey_ADZUNA_APP_KEY" not in st.session_state:
         st.session_state["ukey_ADZUNA_APP_KEY"] = _saved.get("adzuna_app_key", "")
+    # Load persisted O*NET credentials
+    if "ukey_ONET_USER" not in st.session_state:
+        st.session_state["ukey_ONET_USER"] = _saved.get("onet_user", "")
+    if "ukey_ONET_PASS" not in st.session_state:
+        st.session_state["ukey_ONET_PASS"] = _saved.get("onet_pass", "")
     # Migrate existing log entries that lack a status field
     for _entry in st.session_state.app_log:
         if "status" not in _entry:
@@ -742,6 +749,11 @@ with st.sidebar:
         st.caption("Free tier: 25,000 requests/month. [Get keys](https://developer.adzuna.com/)")
         st.text_input("Adzuna App ID",  type="password", key="ukey_ADZUNA_APP_ID", placeholder="Paste App ID…")
         st.text_input("Adzuna App Key", type="password", key="ukey_ADZUNA_APP_KEY", placeholder="Paste App Key…")
+        st.markdown("---")
+        st.markdown("**O\*NET Skills Database**")
+        st.caption("Free credentials at [services.onetcenter.org/developer](https://services.onetcenter.org/developer/) — unlocks occupation skill importance scores.")
+        st.text_input("O*NET Username", key="ukey_ONET_USER", placeholder="your username…")
+        st.text_input("O*NET Password", type="password", key="ukey_ONET_PASS", placeholder="your password…")
         if st.button("💾 Save My Keys", use_container_width=True):
             _to_save = {}
             for _p in PROVIDERS:
@@ -751,6 +763,8 @@ with st.sidebar:
                 user_keys=_to_save,
                 adzuna_app_id=st.session_state.get("ukey_ADZUNA_APP_ID", ""),
                 adzuna_app_key=st.session_state.get("ukey_ADZUNA_APP_KEY", ""),
+                onet_user=st.session_state.get("ukey_ONET_USER", ""),
+                onet_pass=st.session_state.get("ukey_ONET_PASS", ""),
             )
             st.success("Keys saved!")
             st.rerun()
@@ -978,12 +992,14 @@ with tab_tailor:
 
     # ── Action buttons ────────────────────────────────────────────────────────
     st.markdown("")
-    btn_col1, btn_col2, _ = st.columns([1, 1, 2])
+    btn_col1, btn_col2, btn_col3, _ = st.columns([1, 1, 1, 1])
 
     with btn_col1:
         score_btn = st.button("🎯 Score My Fit", use_container_width=True)
     with btn_col2:
         run_btn = st.button("✨ Tailor My Resume", type="primary", use_container_width=True)
+    with btn_col3:
+        market_btn = st.button("📊 Market Demand", use_container_width=True)
 
     # ── Score ─────────────────────────────────────────────────────────────────
     if score_btn:
@@ -1023,6 +1039,105 @@ with tab_tailor:
                     except Exception as e:
                         st.error(f"Scoring error: {str(e)[:600]}")
                         st.session_state.last_score = None
+
+    # ── Market Demand ─────────────────────────────────────────────────────────
+    if market_btn:
+        if not job_description.strip():
+            st.warning("Paste a job description first so we know what role to analyze.")
+        elif not _adzuna_id or not _adzuna_key:
+            st.warning("Add your Adzuna App ID and App Key in the sidebar to use Market Demand analysis.")
+        else:
+            from utils.market_intel import fetch_jd_corpus, analyze_corpus, gap_analysis, fetch_onet_skills
+            _role = resume_data.get("target_role", "") if st.session_state.get("tailor_result") else ""
+            if not _role:
+                _jd_first = [ln.strip() for ln in job_description.splitlines() if ln.strip()]
+                _role = _jd_first[0][:60] if _jd_first else "this role"
+            with st.spinner(f"⚙️ FeTcHiNg MaRkEt DaTa FoR "{_role}"..."):
+                _jds = fetch_jd_corpus(_role, _adzuna_id, _adzuna_key, pages=5)
+                if not _jds:
+                    st.warning("No job listings returned from Adzuna — check your keys or try a different role title.")
+                else:
+                    _freqs = analyze_corpus(_jds)
+                    _resume_txt = active_resume if active_resume else ""
+                    _have, _missing = gap_analysis(_resume_txt, _freqs)
+                    _onet = fetch_onet_skills(
+                        _role,
+                        st.session_state.get("ukey_ONET_USER", ""),
+                        st.session_state.get("ukey_ONET_PASS", ""),
+                    )
+                    st.session_state.market_intel = {
+                        "role": _role, "jds_count": len(_jds),
+                        "frequencies": _freqs, "have": _have,
+                        "missing": _missing, "onet": _onet,
+                    }
+
+    if st.session_state.market_intel:
+        _mi = st.session_state.market_intel
+        st.markdown("---")
+        st.markdown(
+            f'<div style="font-family:\'Share Tech Mono\',monospace;font-size:0.7rem;'
+            f'text-transform:uppercase;letter-spacing:0.2em;color:#CC0000;'
+            f'border-left:2px solid #CC0000;padding-left:8px;margin-bottom:0.5rem;">'
+            f'Market Demand · {_mi["role"]} · {_mi["jds_count"]} live postings</div>',
+            unsafe_allow_html=True,
+        )
+        _mi_col1, _mi_col2 = st.columns(2)
+
+        with _mi_col1:
+            st.markdown("**Skills in demand — your resume**")
+            _top_have = _mi["have"][:15]
+            if _top_have:
+                for _s in _top_have:
+                    st.markdown(
+                        f'<div style="display:flex;align-items:center;gap:8px;margin-bottom:3px;">'
+                        f'<span style="color:#22C55E;font-size:0.8rem;">✓</span>'
+                        f'<div style="flex:1;background:#111;border-radius:2px;height:10px;">'
+                        f'<div style="background:#22C55E;width:{_s["pct"]}%;height:10px;border-radius:2px;'
+                        f'box-shadow:0 0 4px #22C55E55;"></div></div>'
+                        f'<span style="font-size:0.75rem;color:#94A3B8;min-width:90px;">{_s["skill"]}</span>'
+                        f'<span style="font-size:0.7rem;color:#555;min-width:32px;">{_s["pct"]}%</span>'
+                        f'</div>',
+                        unsafe_allow_html=True,
+                    )
+            else:
+                st.caption("No matching skills detected in your resume.")
+
+        with _mi_col2:
+            st.markdown("**Missing from your resume**")
+            _top_miss = _mi["missing"][:15]
+            if _top_miss:
+                for _s in _top_miss:
+                    _col = "#EF4444" if _s["pct"] >= 50 else "#F97316" if _s["pct"] >= 30 else "#EAB308"
+                    st.markdown(
+                        f'<div style="display:flex;align-items:center;gap:8px;margin-bottom:3px;">'
+                        f'<span style="color:{_col};font-size:0.8rem;">✗</span>'
+                        f'<div style="flex:1;background:#111;border-radius:2px;height:10px;">'
+                        f'<div style="background:{_col};width:{_s["pct"]}%;height:10px;border-radius:2px;'
+                        f'box-shadow:0 0 4px {_col}55;"></div></div>'
+                        f'<span style="font-size:0.75rem;color:#94A3B8;min-width:90px;">{_s["skill"]}</span>'
+                        f'<span style="font-size:0.7rem;color:#555;min-width:32px;">{_s["pct"]}%</span>'
+                        f'</div>',
+                        unsafe_allow_html=True,
+                    )
+            else:
+                st.caption("Your resume covers all detected skills.")
+
+        if _mi.get("onet"):
+            with st.expander("📋 O*NET Occupation Skill Importance"):
+                st.caption("Skill importance scores from the US Dept of Labor O*NET database (1–5 scale).")
+                for _os in _mi["onet"][:12]:
+                    _imp = _os["importance"]
+                    _imp_pct = int((_imp / 5.0) * 100)
+                    _imp_col = "#22C55E" if _imp >= 4 else "#EAB308" if _imp >= 3 else "#94A3B8"
+                    st.markdown(
+                        f'<div style="display:flex;align-items:center;gap:8px;margin-bottom:3px;">'
+                        f'<div style="flex:1;background:#111;border-radius:2px;height:8px;">'
+                        f'<div style="background:{_imp_col};width:{_imp_pct}%;height:8px;border-radius:2px;"></div></div>'
+                        f'<span style="font-size:0.75rem;color:#94A3B8;min-width:130px;">{_os["skill"]}</span>'
+                        f'<span style="font-size:0.7rem;color:#555;">{_imp}/5</span>'
+                        f'</div>',
+                        unsafe_allow_html=True,
+                    )
 
     # Show score card if we have a result
     if st.session_state.last_score:

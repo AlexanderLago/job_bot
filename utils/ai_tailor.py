@@ -52,6 +52,21 @@ ATS OPTIMIZATION RULES:
 - Aggressively apply keyword surfacing and placement so the ATS match score is meaningfully \
   higher than the original resume
 
+RECRUITER BEHAVIOR & MARKET DATA (encode these priorities into every resume):
+- Recruiters spend ~7 seconds on first scan. They look at: name, most recent title/company, \
+  and the first 2 bullets of the most recent role. Put the most keyword-rich, impressive content THERE.
+- 97.8%% of Fortune 500 companies use ATS. Resumes without exact keyword matches are eliminated \
+  before a human ever sees them. Keyword matching is the #1 filter.
+- When a human reviewer spends 1-3 minutes on a resume, they specifically look for: \
+  (1) quantified achievements with numbers/%, (2) recognizable companies/institutions, \
+  (3) career progression. Prioritize these in your output.
+- Keyword density sweet spot: each top keyword should appear 2-3 times across the document \
+  (summary + skills + bullets). More than 3 instances can trigger spam flags.
+- Bullet points with metrics get significantly more attention than generic statements. \
+  When the original resume contains numbers, make sure they are prominent and not buried.
+- Contact info must appear at the very top: name, email, phone, LinkedIn. Many ATS systems \
+  fail to parse resumes where contact info is not in a standard position.
+
 TEMPERATURE GUIDANCE:
 - At low temperature: stay close to original language, but still apply ALL ATS rules aggressively
 - At high temperature: bolder rewording, stronger verbs, more dynamic framing
