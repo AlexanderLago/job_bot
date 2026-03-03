@@ -188,16 +188,6 @@ PROVIDERS = [
         "free": True,
         "signup_url": "https://github.com/settings/tokens",
     },
-    {
-        "id": "nebius",
-        "label": "Llama 3.3 70B · Nebius AI",
-        "key_name": "NEBIUS_API_KEY",
-        "type": "oai",
-        "base_url": "https://api.studio.nebius.ai/v1/",
-        "model": "meta-llama/Llama-3.3-70B-Instruct",
-        "free": True,
-        "signup_url": "https://studio.nebius.ai/",
-    },
 ]
 
 
