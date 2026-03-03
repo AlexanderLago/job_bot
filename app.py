@@ -1052,7 +1052,7 @@ with tab_tailor:
             if not _role:
                 _jd_first = [ln.strip() for ln in job_description.splitlines() if ln.strip()]
                 _role = _jd_first[0][:60] if _jd_first else "this role"
-            with st.spinner(f"⚙️ FeTcHiNg MaRkEt DaTa FoR "{_role}"..."):
+            with st.spinner(f'⚙️ FeTcHiNg MaRkEt DaTa FoR "{_role}"...'):
                 _jds = fetch_jd_corpus(_role, _adzuna_id, _adzuna_key, pages=5)
                 if not _jds:
                     st.warning("No job listings returned from Adzuna — check your keys or try a different role title.")
