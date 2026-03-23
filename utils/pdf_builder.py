@@ -1,5 +1,6 @@
 # utils/pdf_builder.py — Build an ATS-friendly PDF resume using ReportLab
 
+import copy
 import io
 from xml.sax.saxutils import escape
 from reportlab.lib.pagesizes import letter
@@ -27,9 +28,13 @@ DARK_GRAY = colors.HexColor("#444444")
 BLACK = colors.black
 
 
-def _styles():
+def _styles(tight: bool = False):
     base = getSampleStyleSheet()
     custom = {}
+
+    # Tight mode: smaller fonts and tighter spacing to recover vertical space
+    fs = 9 if tight else 10
+    lead = 11 if tight else 12
 
     custom["name"] = ParagraphStyle(
         "name", parent=base["Normal"],
@@ -42,45 +47,45 @@ def _styles():
         "contact", parent=base["Normal"],
         fontSize=9, fontName="Helvetica",
         textColor=DARK_GRAY, alignment=TA_CENTER,
-        spaceAfter=6,
+        spaceAfter=4 if tight else 6,
     )
     custom["section"] = ParagraphStyle(
         "section", parent=base["Normal"],
         fontSize=11, fontName="Helvetica-Bold",
         textColor=BRAND_COLOR, alignment=TA_LEFT,
-        spaceBefore=2, spaceAfter=1,
+        spaceBefore=1 if tight else 2, spaceAfter=1,
     )
     custom["job_title"] = ParagraphStyle(
         "job_title", parent=base["Normal"],
         fontSize=11, fontName="Helvetica-Bold",
-        textColor=BLACK, spaceBefore=3, spaceAfter=0,
+        textColor=BLACK, spaceBefore=1 if tight else 3, spaceAfter=0,
     )
     custom["meta"] = ParagraphStyle(
         "meta", parent=base["Normal"],
-        fontSize=10, fontName="Helvetica-Oblique",
+        fontSize=fs, fontName="Helvetica-Oblique",
         textColor=DARK_GRAY, spaceAfter=0,
     )
     custom["meta_right"] = ParagraphStyle(
         "meta_right", parent=base["Normal"],
-        fontSize=10, fontName="Helvetica-Oblique",
+        fontSize=fs, fontName="Helvetica-Oblique",
         textColor=DARK_GRAY, spaceAfter=0,
         alignment=TA_CENTER,
     )
     custom["body"] = ParagraphStyle(
         "body", parent=base["Normal"],
-        fontSize=10, fontName="Helvetica",
-        textColor=BLACK, spaceAfter=2, leading=12,
+        fontSize=fs, fontName="Helvetica",
+        textColor=BLACK, spaceAfter=1 if tight else 2, leading=lead,
     )
     custom["bullet"] = ParagraphStyle(
         "bullet", parent=base["Normal"],
-        fontSize=10, fontName="Helvetica",
-        textColor=BLACK, spaceAfter=0, leading=12,
+        fontSize=fs, fontName="Helvetica",
+        textColor=BLACK, spaceAfter=0, leading=lead,
         leftIndent=12, bulletIndent=0,
     )
     custom["skill_cat"] = ParagraphStyle(
         "skill_cat", parent=base["Normal"],
-        fontSize=10, fontName="Helvetica",
-        textColor=BLACK, spaceAfter=1, leading=13,
+        fontSize=fs, fontName="Helvetica",
+        textColor=BLACK, spaceAfter=0 if tight else 1, leading=lead,
     )
     return custom
 
@@ -123,7 +128,9 @@ def _stretch_gaps(story: list) -> None:
     if remaining > 2:
         extra = min(remaining / len(gap_indices), _SectionGap.MAX_ADD)
         for idx in gap_indices:
-            story[idx] = _SectionGap(1, _SectionGap.BASE + extra)
+            # Use actual current height so math is correct regardless of gap_base
+            current_h = story[idx].height
+            story[idx] = _SectionGap(1, current_h + extra)
 
 
 def _meta_row(left_text: str, dates: str, styles: dict):
@@ -146,19 +153,8 @@ def _meta_row(left_text: str, dates: str, styles: dict):
     return tbl
 
 
-def build_pdf(data: dict) -> bytes:
-    """Build an ATS-friendly PDF from structured resume data. Returns bytes."""
-    buf = io.BytesIO()
-    doc = SimpleDocTemplate(
-        buf,
-        pagesize=letter,
-        leftMargin=_LEFT_MARGIN,
-        rightMargin=_RIGHT_MARGIN,
-        topMargin=_TOP_MARGIN,
-        bottomMargin=_BOTTOM_MARGIN,
-    )
-
-    S = _styles()
+def _build_story(data: dict, S: dict, gap_base: float = _SectionGap.BASE) -> list:
+    """Construct the full list of flowables for the resume."""
     story = []
 
     # ── Name ──────────────────────────────────────────────────────────────────
@@ -179,7 +175,7 @@ def build_pdf(data: dict) -> bytes:
     # ── Summary ───────────────────────────────────────────────────────────────
     summary = data.get("summary", "")
     if summary:
-        story.append(_SectionGap(1, _SectionGap.BASE))
+        story.append(_SectionGap(1, gap_base))
         story.append(Paragraph("PROFESSIONAL SUMMARY", S["section"]))
         story.append(HRFlowable(width="100%", thickness=1, color=BRAND_COLOR, spaceAfter=2))
         story.append(Paragraph(summary, S["body"]))
@@ -187,7 +183,7 @@ def build_pdf(data: dict) -> bytes:
     # ── Skills ────────────────────────────────────────────────────────────────
     skills = data.get("skills", {})
     if skills:
-        story.append(_SectionGap(1, _SectionGap.BASE))
+        story.append(_SectionGap(1, gap_base))
         story.append(Paragraph("SKILLS", S["section"]))
         story.append(HRFlowable(width="100%", thickness=1, color=BRAND_COLOR, spaceAfter=2))
         if isinstance(skills, dict):
@@ -200,7 +196,7 @@ def build_pdf(data: dict) -> bytes:
     # ── Experience ────────────────────────────────────────────────────────────
     experience = data.get("experience", [])
     if experience:
-        story.append(_SectionGap(1, _SectionGap.BASE))
+        story.append(_SectionGap(1, gap_base))
         story.append(Paragraph("EXPERIENCE", S["section"]))
         story.append(HRFlowable(width="100%", thickness=1, color=BRAND_COLOR, spaceAfter=2))
         for job in experience:
@@ -216,7 +212,7 @@ def build_pdf(data: dict) -> bytes:
     # ── Education ─────────────────────────────────────────────────────────────
     education = data.get("education", [])
     if education:
-        story.append(_SectionGap(1, _SectionGap.BASE))
+        story.append(_SectionGap(1, gap_base))
         story.append(Paragraph("EDUCATION", S["section"]))
         story.append(HRFlowable(width="100%", thickness=1, color=BRAND_COLOR, spaceAfter=2))
         for edu in education:
@@ -232,11 +228,65 @@ def build_pdf(data: dict) -> bytes:
     # ── Certifications ────────────────────────────────────────────────────────
     certs = data.get("certifications", [])
     if certs:
-        story.append(_SectionGap(1, _SectionGap.BASE))
+        story.append(_SectionGap(1, gap_base))
         story.append(Paragraph("CERTIFICATIONS", S["section"]))
         story.append(HRFlowable(width="100%", thickness=1, color=BRAND_COLOR, spaceAfter=2))
         for cert in certs:
             story.append(Paragraph(f"• {cert}", S["bullet"]))
+
+    return story
+
+
+def _story_height(story: list) -> float:
+    return sum(_flowable_height(f) for f in story)
+
+
+def _trim_bullets(data: dict) -> dict:
+    """Return a deep copy of data with one bullet removed from the oldest eligible role.
+
+    Trims from the last (oldest) role first, working toward the first (most recent).
+    Minimum 2 bullets per role in the first pass; drops to 1 if still overflowing.
+    """
+    data = copy.deepcopy(data)
+    experience = data.get("experience", [])
+
+    for min_bullets in (2, 1):
+        for job in reversed(experience):
+            bullets = job.get("bullets", [])
+            if len(bullets) > min_bullets:
+                job["bullets"] = bullets[:-1]
+                return data
+
+    return data  # nothing left to trim
+
+
+def build_pdf(data: dict) -> bytes:
+    """Build an ATS-friendly PDF from structured resume data. Returns bytes."""
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(
+        buf,
+        pagesize=letter,
+        leftMargin=_LEFT_MARGIN,
+        rightMargin=_RIGHT_MARGIN,
+        topMargin=_TOP_MARGIN,
+        bottomMargin=_BOTTOM_MARGIN,
+    )
+
+    # ── Pass 1: Normal styles ─────────────────────────────────────────────────
+    S = _styles(tight=False)
+    story = _build_story(data, S, gap_base=_SectionGap.BASE)
+
+    if _story_height(story) > _USABLE_HEIGHT:
+        # ── Pass 2: Tight styles, zero section gaps ───────────────────────────
+        S = _styles(tight=True)
+        story = _build_story(data, S, gap_base=0)
+
+        # ── Pass 3+: Iteratively trim bullets until content fits ──────────────
+        for _ in range(24):
+            if _story_height(story) <= _USABLE_HEIGHT:
+                break
+            data = _trim_bullets(data)
+            story = _build_story(data, S, gap_base=0)
 
     # Distribute remaining page space evenly across section gaps
     _stretch_gaps(story)

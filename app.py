@@ -1256,7 +1256,7 @@ with tab_tailor:
                     st.error(f"DOCX build error: {e}")
 
         if output_format in ("DOCX + PDF", "PDF only"):
-            with st.spinner("⚙️ ReNdErInG pDf CoNsTrUcT..."):
+            with st.spinner("⚙️ ReNdErInG pDf — eNfOrCiNg 1-pAgE lAyOuT..."):
                 try:
                     pdf_bytes = build_pdf(resume_data)
                 except Exception as e:
@@ -1395,6 +1395,15 @@ with tab_tailor:
                     data=pdf_bytes,
                     file_name=pdf_filename,
                     mime="application/pdf",
+                )
+            with dl_col3:
+                st.markdown(
+                    '<div style="font-family:\'Share Tech Mono\',monospace;font-size:0.68rem;'
+                    'text-transform:uppercase;letter-spacing:0.18em;color:#22C55E;'
+                    'border:1px solid #22C55E;border-radius:2px;padding:6px 12px;'
+                    'display:inline-block;box-shadow:0 0 8px rgba(34,197,94,0.2);'
+                    'margin-top:4px;">✓ 1-page layout enforced</div>',
+                    unsafe_allow_html=True,
                 )
 
         # ── Improvement card ──────────────────────────────────────────────────
