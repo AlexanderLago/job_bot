@@ -138,6 +138,23 @@ OUTPUT FORMAT — return ONLY valid JSON, no markdown, no explanation, just the 
 }"""
 
 
+def _repair_truncated_json(raw: str) -> dict | None:
+    """Attempt to close an unterminated JSON string truncated by token limits."""
+    s = raw
+    # Close any open string by appending a quote, then close open arrays/objects
+    open_braces   = s.count("{") - s.count("}")
+    open_brackets = s.count("[") - s.count("]")
+    # If the last char is mid-string, close it
+    if s and s[-1] not in ('"', '}', ']', ','):
+        s += '"'
+    s += "]" * max(open_brackets, 0)
+    s += "}" * max(open_braces, 0)
+    try:
+        return json.loads(s)
+    except json.JSONDecodeError:
+        return None
+
+
 def tailor_resume(
     resume_text: str,
     job_description: str,
@@ -178,7 +195,7 @@ def tailor_resume(
 
     response = client.messages.create(
         model="claude-sonnet-4-6",
-        max_tokens=4096,
+        max_tokens=8192,
         temperature=temperature,
         system=SYSTEM_PROMPT,
         messages=[{"role": "user", "content": user_message}],
@@ -193,4 +210,8 @@ def tailor_resume(
     try:
         return json.loads(raw)
     except json.JSONDecodeError as e:
+        # If response was truncated (hit token limit), try to repair by closing open structures
+        repaired = _repair_truncated_json(raw)
+        if repaired:
+            return repaired
         raise ValueError(f"AI returned invalid JSON: {e}\n\nRaw output:\n{raw[:500]}")

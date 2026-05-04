@@ -188,6 +188,21 @@ class ProviderRateLimitError(Exception):
 
 # ── Internal helpers ───────────────────────────────────────────────────────────
 
+def _repair_truncated_json(raw: str) -> dict | None:
+    """Attempt to close an unterminated JSON string truncated by token limits."""
+    s = raw
+    open_braces   = s.count("{") - s.count("}")
+    open_brackets = s.count("[") - s.count("]")
+    if s and s[-1] not in ('"', '}', ']', ','):
+        s += '"'
+    s += "]" * max(open_brackets, 0)
+    s += "}" * max(open_braces, 0)
+    try:
+        return json.loads(s)
+    except json.JSONDecodeError:
+        return None
+
+
 def _parse_json(raw: str) -> dict:
     raw = raw.strip()
     # Strip markdown fences
@@ -198,6 +213,9 @@ def _parse_json(raw: str) -> dict:
     try:
         return json.loads(raw)
     except json.JSONDecodeError as e:
+        repaired = _repair_truncated_json(raw)
+        if repaired:
+            return repaired
         raise ValueError(f"AI returned invalid JSON: {e}\n\nRaw output:\n{raw[:500]}")
 
 
@@ -310,7 +328,7 @@ def call_tailor(provider: dict, api_key: str, resume_text: str, jd: str, tempera
             system=SYSTEM_PROMPT,
             user=_tailor_user_msg(resume_text, jd, temperature, preserve_structure),
             temperature=temperature,
-            max_tokens=4096,
+            max_tokens=8192,
             extra_headers=provider.get("extra_headers"),
         )
         return _parse_json(raw)

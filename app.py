@@ -18,6 +18,9 @@ from utils.log_builder import build_log_docx, build_log_csv
 from utils.interview_prep import search_interview_content, generate_questions, rate_answer
 from utils.job_search import search_jobs, generate_search_keywords, _COUNTRY_LABELS
 from utils.salary_estimator import extract_salary_from_jd, search_salary_data, estimate_salary
+from utils.evaluator import evaluate_job, generate_full_report, ARCHETYPES, DIMENSIONS
+from utils.company_research import research_company
+from utils.outreach import generate_linkedin_message
 
 # ── Disk persistence helpers ──────────────────────────────────────────────────
 _SAVE_DIR  = Path.home() / ".job_bot"
@@ -264,6 +267,25 @@ if "salary_result" not in st.session_state:
     st.session_state.salary_result = None
 if "salary_job_title" not in st.session_state:
     st.session_state.salary_job_title = ""
+if "eval_result" not in st.session_state:
+    st.session_state.eval_result = None
+if "eval_full_report" not in st.session_state:
+    st.session_state.eval_full_report = None
+if "eval_research" not in st.session_state:
+    st.session_state.eval_research = None
+if "eval_outreach" not in st.session_state:
+    st.session_state.eval_outreach = None
+if "pipeline_queue" not in st.session_state:
+    st.session_state.pipeline_queue = []
+if "story_bank" not in st.session_state:
+    st.session_state.story_bank = []  # [{prompt, situation, task, action, result, reflection, tags, added}]
+if "user_profile" not in st.session_state:
+    st.session_state.user_profile = {
+        "target_roles": [],
+        "min_salary":   0,
+        "remote_pref":  "Any",
+        "location":     "",
+    }
 
 # ── Load persisted state from disk (runs once per session) ───────────────────
 if "fs_loaded" not in st.session_state:
@@ -302,6 +324,13 @@ if "fs_loaded" not in st.session_state:
         st.session_state.app_log = _saved.get("app_log", [])
     if not st.session_state.history:
         st.session_state.history = _saved.get("history_meta", [])
+    if not st.session_state.pipeline_queue:
+        st.session_state.pipeline_queue = _saved.get("pipeline_queue", [])
+    if not st.session_state.story_bank:
+        st.session_state.story_bank = _saved.get("story_bank", [])
+    _saved_profile = _saved.get("user_profile", {})
+    if _saved_profile:
+        st.session_state.user_profile.update(_saved_profile)
     st.session_state.fs_loaded = True
     # Seed user-key widget states from disk so inputs show saved values on load
     _saved_ukeys = _saved.get("user_keys", {})
@@ -828,6 +857,49 @@ with st.sidebar:
     )
 
     st.divider()
+
+    # ── Career Profile ─────────────────────────────────────────────────────────
+    with st.expander("🎯 Career Profile", expanded=False):
+        st.caption("Used by the Evaluate tab to score job fit against your goals.")
+        _prof = st.session_state.user_profile
+        _roles_raw = st.text_input(
+            "Target roles (comma-separated)",
+            value=", ".join(_prof.get("target_roles", [])),
+            placeholder="e.g. Data Scientist, ML Engineer",
+            key="prof_roles",
+        )
+        _min_sal = st.number_input(
+            "Min salary expectation (USD/yr, 0 = skip)",
+            min_value=0,
+            max_value=1_000_000,
+            step=5000,
+            value=int(_prof.get("min_salary", 0)),
+            key="prof_salary",
+        )
+        _remote = st.selectbox(
+            "Remote preference",
+            ["Any", "Remote", "Hybrid", "On-site"],
+            index=["Any", "Remote", "Hybrid", "On-site"].index(_prof.get("remote_pref", "Any")),
+            key="prof_remote",
+        )
+        _location = st.text_input(
+            "Preferred location",
+            value=_prof.get("location", ""),
+            placeholder="e.g. New York, NY",
+            key="prof_location",
+        )
+        if st.button("💾 Save Profile", key="save_profile_btn"):
+            _new_roles = [r.strip() for r in _roles_raw.split(",") if r.strip()]
+            st.session_state.user_profile = {
+                "target_roles": _new_roles,
+                "min_salary":   int(_min_sal),
+                "remote_pref":  _remote,
+                "location":     _location.strip(),
+            }
+            _patch_saved(user_profile=st.session_state.user_profile)
+            st.success("Profile saved.")
+
+    st.divider()
     st.markdown("**🗑️ Saved Data**")
     if st.button("Clear all saved data", type="secondary"):
         _clear_saved()
@@ -836,8 +908,11 @@ with st.sidebar:
         st.session_state.master_resume_name  = ""
         st.session_state.master_resume_text  = ""
         st.session_state.master_resume_bytes = b""
-        st.session_state.app_log  = []
-        st.session_state.history  = []
+        st.session_state.app_log      = []
+        st.session_state.history      = []
+        st.session_state.pipeline_queue = []
+        st.session_state.story_bank    = []
+        st.session_state.user_profile = {"target_roles": [], "min_salary": 0, "remote_pref": "Any", "location": ""}
         st.success("All saved data cleared.")
 
     st.divider()
@@ -899,8 +974,8 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ── Tabs ──────────────────────────────────────────────────────────────────────
-tab_tailor, tab_history, tab_log, tab_prep, tab_search, tab_salary = st.tabs([
-    "✨ Tailor", "📁 History", "📋 Application Log",
+tab_tailor, tab_eval, tab_history, tab_log, tab_prep, tab_search, tab_salary = st.tabs([
+    "✨ Tailor", "🎯 Evaluate", "📁 History", "📋 Application Log",
     "🎤 Interview Prep", "🔍 Job Search", "💰 Salary Estimator",
 ])
 
@@ -1558,7 +1633,481 @@ with tab_tailor:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# TAB 2 — HISTORY
+# TAB 2 — EVALUATE
+# Multi-dimensional A-F job evaluation inspired by career-ops
+# ══════════════════════════════════════════════════════════════════════════════
+with tab_eval:
+    st.markdown('<p class="section-label">Job Evaluation</p>', unsafe_allow_html=True)
+    st.caption(
+        "Score a job opportunity across 10 weighted dimensions, detect the role archetype, "
+        "and get a go/no-go grade before spending time tailoring."
+    )
+
+    if not api_key:
+        st.warning("Configure an AI provider in the sidebar to use Job Evaluation.")
+    else:
+        _ev_resume_text = st.session_state.master_resume_text
+        if not _ev_resume_text:
+            st.warning("Upload a master resume in the sidebar first — the evaluator needs it to score fit.")
+        else:
+            st.info(f"Evaluating against: **{st.session_state.master_resume_name}**")
+
+        _ev_col_left, _ev_col_right = st.columns([1, 1])
+
+        with _ev_col_left:
+            st.markdown('<p class="section-label">Job Description</p>', unsafe_allow_html=True)
+            _ev_input_method = st.radio(
+                "Input method",
+                ["Paste text", "Job URL"],
+                horizontal=True,
+                key="ev_input_method",
+                label_visibility="collapsed",
+            )
+            _ev_jd = ""
+            if _ev_input_method == "Job URL":
+                _ev_url_col, _ev_btn_col = st.columns([4, 1])
+                with _ev_url_col:
+                    _ev_url = st.text_input(
+                        "Job URL",
+                        placeholder="https://careers.example.com/job/…",
+                        key="ev_url",
+                        label_visibility="collapsed",
+                    )
+                with _ev_btn_col:
+                    st.markdown("<br>", unsafe_allow_html=True)
+                    _ev_fetch_btn = st.button("Fetch", key="ev_fetch_btn", use_container_width=True)
+                if _ev_fetch_btn and _ev_url.strip():
+                    with st.spinner("⚙️ FeTcHiNg JoB dAtA..."):
+                        _ev_fetched, _ev_err = scrape_job_url(_ev_url.strip())
+                    if _ev_err:
+                        st.error(f"Could not fetch URL: {_ev_err}")
+                    else:
+                        st.session_state["ev_fetched_jd"] = _ev_fetched
+                        st.toast("Job description fetched.")
+                _ev_jd = st.session_state.get("ev_fetched_jd", "")
+                if _ev_jd:
+                    st.caption(f"Fetched {len(_ev_jd):,} characters.")
+            else:
+                _ev_jd = st.text_area(
+                    "Paste job description",
+                    height=220,
+                    key="ev_jd_text",
+                    label_visibility="collapsed",
+                    placeholder="Paste the full job description here…",
+                )
+
+        with _ev_col_right:
+            st.markdown('<p class="section-label">Profile snapshot</p>', unsafe_allow_html=True)
+            _psnap = st.session_state.user_profile
+            if _psnap.get("target_roles"):
+                st.markdown(f"**Target roles:** {', '.join(_psnap['target_roles'])}")
+            else:
+                st.caption("No target roles set — configure in the sidebar Career Profile section.")
+            if _psnap.get("min_salary"):
+                st.markdown(f"**Min salary:** ${_psnap['min_salary']:,}/yr")
+            st.markdown(f"**Remote pref:** {_psnap.get('remote_pref', 'Any')}")
+            if _psnap.get("location"):
+                st.markdown(f"**Location:** {_psnap['location']}")
+
+            st.markdown("---")
+            st.markdown("**Archetype guide**")
+            for _arch, _desc in ARCHETYPES.items():
+                st.caption(f"**{_arch}** — {_desc}")
+
+        st.markdown("")
+        _ev_run_btn = st.button(
+            "⚡ Evaluate Job Fit",
+            type="primary",
+            key="ev_run_btn",
+            disabled=(not _ev_resume_text or not _ev_jd.strip()),
+        )
+
+        if _ev_run_btn:
+            with st.spinner("⚙️ AnAlYzInG jOb FiT aCrOsS 10 DiMeNsIoNs..."):
+                try:
+                    _ev_result = evaluate_job(
+                        resume_text=_ev_resume_text,
+                        job_description=_ev_jd,
+                        provider_cfg=_selected_cfg,
+                        api_key=api_key,
+                        user_profile=st.session_state.user_profile,
+                    )
+                    st.session_state.eval_result = _ev_result
+                except Exception as _ev_e:
+                    st.error(f"Evaluation failed: {_ev_e}")
+                    with st.expander("Debug"):
+                        st.code(traceback.format_exc())
+
+        # ── Results ───────────────────────────────────────────────────────────
+        _evr = st.session_state.eval_result
+        if _evr:
+            st.markdown("---")
+
+            # Grade + archetype header
+            _grade      = _evr["grade"]
+            _score      = _evr["overall_score"]
+            _rec        = _evr["recommendation"]
+            _archetype  = _evr["archetype"]
+            _grade_colors = {"A": "#22C55E", "B": "#84CC16", "C": "#EAB308", "D": "#F97316", "F": "#EF4444"}
+            _rec_colors   = {"Apply": "#22C55E", "Borderline": "#EAB308", "Skip": "#EF4444"}
+            _gc = _grade_colors.get(_grade, "#888")
+            _rc = _rec_colors.get(_rec, "#888")
+
+            _gr_c1, _gr_c2, _gr_c3 = st.columns([1, 1, 2])
+            with _gr_c1:
+                st.markdown(
+                    f'<div style="text-align:center;padding:1rem;">'
+                    f'<div style="font-family:Orbitron,monospace;font-size:3.5rem;font-weight:900;color:{_gc};'
+                    f'text-shadow:0 0 20px {_gc}88;line-height:1;">{_grade}</div>'
+                    f'<div style="color:#94A3B8;font-size:0.8rem;letter-spacing:.1em;">{_score}/100</div>'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
+            with _gr_c2:
+                st.markdown(
+                    f'<div style="padding:1rem;">'
+                    f'<div style="font-size:0.7rem;color:#555;text-transform:uppercase;letter-spacing:.15em;">Recommendation</div>'
+                    f'<div style="font-family:\'Share Tech Mono\',monospace;font-size:1.4rem;color:{_rc};'
+                    f'font-weight:700;margin:4px 0;">{_rec}</div>'
+                    f'<div style="font-size:0.7rem;color:#555;text-transform:uppercase;letter-spacing:.15em;margin-top:8px;">Archetype</div>'
+                    f'<div style="font-family:\'Share Tech Mono\',monospace;font-size:0.95rem;color:#94A3B8;">{_archetype}</div>'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
+            with _gr_c3:
+                st.markdown(
+                    f'<div style="padding:1rem;background:#0a0a0a;border-left:2px solid #1e1e1e;">'
+                    f'<div style="font-size:0.7rem;color:#555;text-transform:uppercase;letter-spacing:.15em;margin-bottom:6px;">Analysis</div>'
+                    f'<div style="font-size:0.88rem;color:#94A3B8;line-height:1.5;">{_evr["reasoning"]}</div>'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
+
+            # Dimension score bars
+            st.markdown("#### Dimension Breakdown")
+            _dim_scores = _evr.get("dimension_scores", {})
+            _dim_c1, _dim_c2 = st.columns(2)
+            for _di, ((_dname, _dweight), _col) in enumerate(
+                zip(DIMENSIONS, [_dim_c1, _dim_c2] * 10)
+            ):
+                _dscore = _dim_scores.get(_dname, 5)
+                _dpct   = int(_dscore * 10)
+                _dcol   = "#22C55E" if _dscore >= 8 else "#84CC16" if _dscore >= 6 else "#EAB308" if _dscore >= 4 else "#EF4444"
+                with _col:
+                    st.markdown(
+                        f'<div style="display:flex;align-items:center;gap:8px;margin-bottom:5px;">'
+                        f'<span style="font-size:0.72rem;color:#94A3B8;min-width:120px;">{_dname}</span>'
+                        f'<div style="flex:1;background:#111;border-radius:2px;height:8px;">'
+                        f'<div style="background:{_dcol};width:{_dpct}%;height:8px;border-radius:2px;'
+                        f'box-shadow:0 0 4px {_dcol}55;"></div></div>'
+                        f'<span style="font-size:0.7rem;color:#555;min-width:28px;">{_dscore}/10</span>'
+                        f'</div>',
+                        unsafe_allow_html=True,
+                    )
+
+            # STAR prompts
+            if _evr.get("star_prompts"):
+                st.markdown("#### STAR Story Prompts")
+                for _sp in _evr["star_prompts"]:
+                    st.markdown(f'<div style="background:#0a0a0a;border-left:2px solid #CC0000;padding:8px 12px;'
+                                f'margin-bottom:6px;font-size:0.87rem;color:#94A3B8;">{_sp}</div>',
+                                unsafe_allow_html=True)
+
+            # Keywords to inject
+            if _evr.get("keywords_to_inject"):
+                st.markdown("#### Critical ATS Keywords")
+                _kw_pills = "".join(
+                    f'<span class="keyword-pill">{k}</span>'
+                    for k in _evr["keywords_to_inject"]
+                )
+                st.markdown(_kw_pills, unsafe_allow_html=True)
+
+            # ── Deep analysis buttons ─────────────────────────────────────────
+            st.markdown("---")
+            _deep_c1, _deep_c2, _deep_c3 = st.columns(3)
+
+            with _deep_c1:
+                if st.button("📄 Full Report", key="ev_full_report_btn", use_container_width=True,
+                             help="Generate career-ops style A–F deep report"):
+                    with st.spinner("⚙️ GeNeRaTiNg DeEp AnAlYsIs..."):
+                        try:
+                            _fr = generate_full_report(
+                                resume_text=_ev_resume_text,
+                                job_description=_ev_jd,
+                                provider_cfg=_selected_cfg,
+                                api_key=api_key,
+                                user_profile=st.session_state.user_profile,
+                            )
+                            st.session_state.eval_full_report = _fr
+                        except Exception as _fe:
+                            st.error(f"Full report failed: {_fe}")
+
+            with _deep_c2:
+                if st.button("🔍 Research Company", key="ev_research_btn", use_container_width=True,
+                             help="6-dimension company deep-dive"):
+                    with st.spinner("⚙️ ReSeArChInG cOmPaNy..."):
+                        try:
+                            _cr = research_company(
+                                job_description=_ev_jd,
+                                resume_text=_ev_resume_text,
+                                provider_cfg=_selected_cfg,
+                                api_key=api_key,
+                                company_name=_extract_company_name(_ev_jd.splitlines()),
+                            )
+                            st.session_state.eval_research = _cr
+                        except Exception as _cre:
+                            st.error(f"Company research failed: {_cre}")
+
+            with _deep_c3:
+                if st.button("✉️ LinkedIn Message", key="ev_outreach_btn", use_container_width=True,
+                             help="Generate a ≤300-char Hook/Proof/Proposal message"):
+                    with st.spinner("⚙️ CrAfTiNg oUtReAcH..."):
+                        try:
+                            _om = generate_linkedin_message(
+                                resume_text=_ev_resume_text,
+                                job_description=_ev_jd,
+                                provider_cfg=_selected_cfg,
+                                api_key=api_key,
+                                company_name=_extract_company_name(_ev_jd.splitlines()),
+                            )
+                            st.session_state.eval_outreach = _om
+                        except Exception as _oe:
+                            st.error(f"Outreach generation failed: {_oe}")
+
+            # ── Full Report display ───────────────────────────────────────────
+            _efr = st.session_state.eval_full_report
+            if _efr:
+                with st.expander("📄 Full Evaluation Report", expanded=True):
+                    _rs = _efr.get("role_summary", {})
+                    if _rs:
+                        st.markdown(f"**TL;DR:** {_rs.get('tldr', '')}")
+                        _rs_cols = st.columns(3)
+                        _rs_cols[0].metric("Archetype", _rs.get("archetype", "—"))
+                        _rs_cols[1].metric("Seniority", _rs.get("seniority", "—"))
+                        _rs_cols[2].metric("Work Arrangement", _rs.get("work_arrangement", "—"))
+
+                    _cvm = _efr.get("cv_match", {})
+                    if _cvm:
+                        st.markdown("---")
+                        st.markdown("**CV Match**")
+                        st.caption(_cvm.get("match_summary", ""))
+                        _cvm_c1, _cvm_c2 = st.columns(2)
+                        with _cvm_c1:
+                            st.markdown("✅ **Strengths**")
+                            for _s in _cvm.get("strengths", []):
+                                st.markdown(f"- {_s}")
+                        with _cvm_c2:
+                            st.markdown("⚠️ **Gaps & Mitigations**")
+                            for _g in _cvm.get("gaps", []):
+                                st.markdown(f"- **{_g.get('gap','')}** — {_g.get('mitigation','')}")
+
+                    _ls = _efr.get("level_strategy", {})
+                    if _ls:
+                        st.markdown("---")
+                        st.markdown("**Level & Strategy**")
+                        st.info(_ls.get("positioning", ""))
+                        if _ls.get("talking_points"):
+                            st.markdown("**Talking Points:**")
+                            for _tp in _ls["talking_points"]:
+                                st.markdown(f"- {_tp}")
+                        if _ls.get("watch_out"):
+                            st.warning(f"Watch out: {_ls['watch_out']}")
+
+                    _cm = _efr.get("comp_market", {})
+                    if _cm:
+                        st.markdown("---")
+                        st.markdown("**Compensation & Market**")
+                        _cm_c1, _cm_c2 = st.columns([1, 2])
+                        _cm_c1.metric("Estimated Range", _cm.get("estimated_range", "—"))
+                        _cm_c2.caption(_cm.get("notes", ""))
+                        if _cm.get("positioning"):
+                            st.info(_cm["positioning"])
+
+                    _rt = _efr.get("resume_tips", {})
+                    if _rt:
+                        st.markdown("---")
+                        st.markdown("**Resume Tips**")
+                        if _rt.get("summary_tweak"):
+                            st.markdown(f'<div style="background:#0a0a0a;border-left:2px solid #CC0000;'
+                                        f'padding:8px 12px;font-size:0.87rem;color:#94A3B8;">'
+                                        f'<strong>Suggested headline:</strong> {_rt["summary_tweak"]}</div>',
+                                        unsafe_allow_html=True)
+                        if _rt.get("bullets_to_add"):
+                            st.markdown("**Bullets to add:**")
+                            for _b in _rt["bullets_to_add"]:
+                                st.markdown(f"- {_b}")
+                        if _rt.get("keywords_missing"):
+                            _kp2 = "".join(
+                                f'<span class="keyword-pill">{k}</span>'
+                                for k in _rt["keywords_missing"]
+                            )
+                            st.markdown("**Missing keywords:** " + _kp2, unsafe_allow_html=True)
+
+                    _stories = _efr.get("star_stories", [])
+                    if _stories:
+                        st.markdown("---")
+                        st.markdown("**STAR+R Interview Stories**")
+                        for _si, _story in enumerate(_stories):
+                            with st.expander(f"Story {_si+1}: {_story.get('prompt', '')}", expanded=False):
+                                st.markdown(f"**S — Situation:** {_story.get('situation', '')}")
+                                st.markdown(f"**T — Task:** {_story.get('task', '')}")
+                                st.markdown(f"**A — Action:** {_story.get('action', '')}")
+                                st.markdown(f"**R — Result:** {_story.get('result', '')}")
+                                st.markdown(f"**R — Reflection:** {_story.get('reflection', '')}")
+                                if st.button("💾 Save to Story Bank", key=f"save_story_{_si}"):
+                                    _new_story = {
+                                        **_story,
+                                        "tags": [_evr.get("archetype", "")],
+                                        "added": datetime.today().strftime("%Y-%m-%d"),
+                                    }
+                                    st.session_state.story_bank.append(_new_story)
+                                    _patch_saved(story_bank=st.session_state.story_bank)
+                                    st.success("Saved to Story Bank.")
+
+            # ── Company Research display ──────────────────────────────────────
+            _ecr = st.session_state.eval_research
+            if _ecr:
+                with st.expander("🔍 Company Research", expanded=True):
+                    _cr_dims = [
+                        ("ai_strategy",            "🤖 AI Strategy"),
+                        ("recent_movements",        "📈 Recent Movements"),
+                        ("engineering_culture",     "⚙️  Engineering Culture"),
+                        ("probable_challenges",     "⚠️  Probable Challenges"),
+                        ("competitive_positioning", "🏆 Competitive Positioning"),
+                        ("candidate_alignment",     "🎯 Your Alignment"),
+                    ]
+                    for _key, _label in _cr_dims:
+                        _sect = _ecr.get(_key, {})
+                        if not _sect:
+                            continue
+                        st.markdown(f"**{_label}**")
+                        st.caption(_sect.get("summary", ""))
+                        _signals = _sect.get("notable_signals") or _sect.get("talking_points", [])
+                        for _sig in _signals:
+                            st.markdown(
+                                f'<div style="background:#0a0a0a;border-left:2px solid #1e1e1e;'
+                                f'padding:4px 10px;font-size:0.82rem;color:#94A3B8;margin-bottom:3px;">'
+                                f'{_sig}</div>',
+                                unsafe_allow_html=True,
+                            )
+                        st.markdown("")
+
+            # ── LinkedIn Outreach display ─────────────────────────────────────
+            _eom = st.session_state.eval_outreach
+            if _eom:
+                with st.expander("✉️ LinkedIn Outreach Message", expanded=True):
+                    _char = _eom.get("char_count", len(_eom.get("full_message", "")))
+                    _char_color = "#22C55E" if _char <= 300 else "#EF4444"
+                    st.markdown(
+                        f'<div style="background:#0a0a0a;border:1px solid #1e1e1e;border-radius:4px;'
+                        f'padding:12px 16px;font-size:0.92rem;color:#E2E8F0;line-height:1.6;'
+                        f'font-family:\'DM Sans\',sans-serif;">'
+                        f'{_eom.get("full_message","")}'
+                        f'</div>',
+                        unsafe_allow_html=True,
+                    )
+                    st.markdown(
+                        f'<div style="text-align:right;font-size:0.75rem;color:{_char_color};margin-top:4px;">'
+                        f'{_char} / 300 chars</div>',
+                        unsafe_allow_html=True,
+                    )
+                    st.markdown("---")
+                    _om_c1, _om_c2, _om_c3 = st.columns(3)
+                    _om_c1.caption(f"🪝 **Hook:** {_eom.get('hook', '')}")
+                    _om_c2.caption(f"📊 **Proof:** {_eom.get('proof', '')}")
+                    _om_c3.caption(f"💬 **Proposal:** {_eom.get('proposal', '')}")
+
+            # Action buttons
+            st.markdown("---")
+            _ev_act_c1, _ev_act_c2, _ev_act_c3 = st.columns([1, 1, 2])
+            with _ev_act_c1:
+                if st.button("✨ Tailor Resume for This Job", key="ev_to_tailor_btn", use_container_width=True):
+                    # Pre-populate job description in tailor tab via session state
+                    st.session_state["ev_send_to_tailor"] = _ev_jd
+                    st.toast("Head to the ✨ Tailor tab — the JD is ready.", icon="✨")
+            with _ev_act_c2:
+                if st.button("➕ Add to Pipeline Queue", key="ev_to_pipeline_btn", use_container_width=True):
+                    _pipeline_entry = {
+                        "url":     st.session_state.get("ev_url", ""),
+                        "jd_text": _ev_jd[:500],
+                        "company": _extract_company_name(_ev_jd.splitlines()),
+                        "title":   "",
+                        "grade":   _evr["grade"],
+                        "score":   _evr["overall_score"],
+                        "rec":     _evr["recommendation"],
+                        "archetype": _evr["archetype"],
+                        "status":  "Evaluated",
+                        "added":   datetime.today().strftime("%Y-%m-%d"),
+                    }
+                    # Avoid duplicates by URL
+                    _dup = any(
+                        p.get("url") and p["url"] == _pipeline_entry["url"]
+                        for p in st.session_state.pipeline_queue
+                    )
+                    if _dup:
+                        st.warning("This URL is already in your pipeline.")
+                    else:
+                        st.session_state.pipeline_queue.insert(0, _pipeline_entry)
+                        _patch_saved(pipeline_queue=st.session_state.pipeline_queue)
+                        st.success("Added to Pipeline Queue.")
+
+    # ── Pipeline Queue ────────────────────────────────────────────────────────
+    st.markdown("---")
+    st.markdown("### Pipeline Queue")
+    st.caption("Jobs you've evaluated and are considering. Click 'Mark Applied' to move them to the Application Log.")
+
+    if not st.session_state.pipeline_queue:
+        st.info("Your pipeline is empty. Evaluate a job above and click **Add to Pipeline Queue**.")
+    else:
+        import pandas as pd
+        _pq_rows = []
+        for _pq_item in st.session_state.pipeline_queue:
+            _pq_rows.append({
+                "Date":      _pq_item.get("added", ""),
+                "Company":   _pq_item.get("company", "—"),
+                "Grade":     _pq_item.get("grade", "?"),
+                "Score":     _pq_item.get("score", 0),
+                "Archetype": _pq_item.get("archetype", "—"),
+                "Action":    _pq_item.get("rec", "—"),
+                "Status":    _pq_item.get("status", "Evaluated"),
+            })
+        _pq_df = pd.DataFrame(_pq_rows)
+        st.dataframe(_pq_df, use_container_width=True, hide_index=True)
+
+        _pq_act_c1, _pq_act_c2, _ = st.columns([1, 1, 2])
+        with _pq_act_c1:
+            # Move top-grade items straight to Application Log
+            if st.button("✓ Log All 'Apply' Items", key="pq_log_btn", use_container_width=True):
+                _logged = 0
+                for _pq_item in st.session_state.pipeline_queue:
+                    if _pq_item.get("rec") == "Apply" and _pq_item.get("status") != "Applied":
+                        st.session_state.app_log.append({
+                            "date":      _pq_item.get("added", datetime.today().strftime("%Y-%m-%d")),
+                            "job_title": _pq_item.get("title", ""),
+                            "company":   _pq_item.get("company", ""),
+                            "location":  "",
+                            "work_type": "",
+                            "fit_pct":   _pq_item.get("score", 0),
+                            "status":    "Applied",
+                            "archetype": _pq_item.get("archetype", ""),
+                        })
+                        _pq_item["status"] = "Applied"
+                        _logged += 1
+                _patch_saved(
+                    app_log=st.session_state.app_log,
+                    pipeline_queue=st.session_state.pipeline_queue,
+                )
+                st.success(f"Logged {_logged} application(s) to Application Log.")
+                st.rerun()
+        with _pq_act_c2:
+            if st.button("🗑️ Clear Pipeline", key="pq_clear_btn", use_container_width=True):
+                st.session_state.pipeline_queue = []
+                _patch_saved(pipeline_queue=[])
+                st.rerun()
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# TAB 3 — HISTORY
 # ══════════════════════════════════════════════════════════════════════════════
 with tab_history:
     st.markdown("### Session History")
@@ -1613,11 +2162,67 @@ with tab_log:
     st.markdown("### Application Log")
     st.caption("Track every job you apply to. Export as DOCX or CSV to save your records.")
 
+    # Canonical state machine inspired by career-ops
     _STATUS_OPTIONS = [
-        "Applied", "Phone Screen", "1st Interview",
-        "2nd Interview", "Final Round", "Verbal Offer",
-        "Offer Received", "Rejected", "No Response",
+        "Applied",
+        "Screening",
+        "1st Interview",
+        "2nd Interview",
+        "Final Round",
+        "Offer",
+        "Accepted",
+        "Rejected",
+        "No Response",
+        "Withdrawn",
+        "Paused",
     ]
+    _STATUS_COLORS = {
+        "Applied":      "#3B82F6",
+        "Screening":    "#8B5CF6",
+        "1st Interview":"#F59E0B",
+        "2nd Interview":"#F97316",
+        "Final Round":  "#EF4444",
+        "Offer":        "#22C55E",
+        "Accepted":     "#16A34A",
+        "Rejected":     "#DC2626",
+        "No Response":  "#6B7280",
+        "Withdrawn":    "#9CA3AF",
+        "Paused":       "#78716C",
+    }
+
+    # ── Analytics dashboard ───────────────────────────────────────────────────
+    if st.session_state.app_log:
+        _log = st.session_state.app_log
+        _total = len(_log)
+        _by_status: dict = {}
+        _scores = []
+        for _e in _log:
+            _s = _e.get("status", "Applied")
+            _by_status[_s] = _by_status.get(_s, 0) + 1
+            _fp = _e.get("fit_pct", 0)
+            if _fp:
+                _scores.append(_fp)
+
+        _avg_score = round(sum(_scores) / len(_scores)) if _scores else 0
+        _in_progress = sum(_by_status.get(s, 0) for s in ["Screening", "1st Interview", "2nd Interview", "Final Round"])
+        _offers = _by_status.get("Offer", 0) + _by_status.get("Accepted", 0)
+
+        _an_c1, _an_c2, _an_c3, _an_c4 = st.columns(4)
+        _an_c1.metric("Total Applications", _total)
+        _an_c2.metric("Active / In Progress", _in_progress)
+        _an_c3.metric("Offers", _offers)
+        _an_c4.metric("Avg Fit Score", f"{_avg_score}%")
+
+        # Status breakdown pills
+        _status_pills = "".join(
+            f'<span style="display:inline-block;background:{_STATUS_COLORS.get(s,"#555")};'
+            f'color:#fff;border-radius:2px;padding:2px 10px;font-size:0.72rem;'
+            f'font-family:\'Share Tech Mono\',monospace;margin:3px 3px 3px 0;">'
+            f'{s}: {c}</span>'
+            for s, c in sorted(_by_status.items(), key=lambda x: -x[1])
+        )
+        st.markdown(_status_pills, unsafe_allow_html=True)
+        st.markdown("")
 
     # ── Add entry manually ────────────────────────────────────────────────────
     with st.expander("➕ Add Entry Manually", expanded=False):
@@ -1874,6 +2479,77 @@ with tab_prep:
                         st.rerun()
                     except Exception as _e:
                         st.error(f"Could not rate answer: {_e}")
+
+    # ── Story Bank ────────────────────────────────────────────────────────────
+    st.markdown("---")
+    st.markdown("### 📖 Story Bank (STAR+R)")
+    st.caption(
+        "Persistent library of your interview stories. Stories saved from the 🎯 Evaluate tab "
+        "appear here automatically. You can also add them manually."
+    )
+
+    with st.expander("➕ Add Story Manually", expanded=False):
+        _sb_prompt   = st.text_input("Interview question this story answers", key="sb_prompt")
+        _sb_sit      = st.text_area("Situation (context, 2-3 sentences)", key="sb_situation", height=80)
+        _sb_task     = st.text_area("Task (your responsibility)", key="sb_task", height=60)
+        _sb_action   = st.text_area("Action (specific steps you took)", key="sb_action", height=80)
+        _sb_result   = st.text_area("Result (quantified outcome)", key="sb_result", height=60)
+        _sb_reflect  = st.text_area("Reflection (what you learned)", key="sb_reflection", height=60)
+        _sb_tags_raw = st.text_input("Tags (comma-separated, e.g. Leadership, Agentic AI)", key="sb_tags")
+        if st.button("💾 Save Story", key="sb_save_btn", type="primary"):
+            if _sb_prompt and _sb_action:
+                _new_sb = {
+                    "prompt":     _sb_prompt,
+                    "situation":  _sb_sit,
+                    "task":       _sb_task,
+                    "action":     _sb_action,
+                    "result":     _sb_result,
+                    "reflection": _sb_reflect,
+                    "tags":       [t.strip() for t in _sb_tags_raw.split(",") if t.strip()],
+                    "added":      datetime.today().strftime("%Y-%m-%d"),
+                }
+                st.session_state.story_bank.append(_new_sb)
+                _patch_saved(story_bank=st.session_state.story_bank)
+                st.success("Story saved to bank.")
+                st.rerun()
+            else:
+                st.warning("Fill in at least the question prompt and action fields.")
+
+    if not st.session_state.story_bank:
+        st.info("No stories yet. Add manually above, or generate stories from the **🎯 Evaluate** tab.")
+    else:
+        # Filter by tag
+        _all_tags = sorted({t for s in st.session_state.story_bank for t in s.get("tags", [])})
+        _tag_filter = st.multiselect("Filter by tag", _all_tags, key="sb_tag_filter")
+        _filtered_stories = [
+            s for s in st.session_state.story_bank
+            if not _tag_filter or any(t in s.get("tags", []) for t in _tag_filter)
+        ]
+        st.caption(f"{len(_filtered_stories)} of {len(st.session_state.story_bank)} stories")
+        for _sbi, _sb in enumerate(_filtered_stories):
+            _real_idx = st.session_state.story_bank.index(_sb)
+            with st.expander(f"**{_sb.get('prompt', 'Untitled')}**  ·  {_sb.get('added', '')}", expanded=False):
+                _sb_tag_pills = "".join(
+                    f'<span style="background:#1e1e1e;color:#94A3B8;border-radius:2px;'
+                    f'padding:1px 7px;font-size:0.7rem;margin-right:4px;">{t}</span>'
+                    for t in _sb.get("tags", [])
+                )
+                if _sb_tag_pills:
+                    st.markdown(_sb_tag_pills, unsafe_allow_html=True)
+                st.markdown(f"**S — Situation:** {_sb.get('situation', '—')}")
+                st.markdown(f"**T — Task:** {_sb.get('task', '—')}")
+                st.markdown(f"**A — Action:** {_sb.get('action', '—')}")
+                st.markdown(f"**R — Result:** {_sb.get('result', '—')}")
+                st.markdown(f"**R — Reflection:** {_sb.get('reflection', '—')}")
+                if st.button("🗑️ Remove", key=f"sb_del_{_real_idx}"):
+                    st.session_state.story_bank.pop(_real_idx)
+                    _patch_saved(story_bank=st.session_state.story_bank)
+                    st.rerun()
+
+        if st.button("🗑️ Clear All Stories", key="sb_clear_all"):
+            st.session_state.story_bank = []
+            _patch_saved(story_bank=[])
+            st.rerun()
 
 
 # ══════════════════════════════════════════════════════════════════════════════
