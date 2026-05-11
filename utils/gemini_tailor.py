@@ -7,6 +7,20 @@ from google.genai import types
 
 _MODEL = "gemini-3-flash-preview"
 
+
+def _repair_truncated_json(raw: str) -> dict | None:
+    s = raw
+    open_braces   = s.count("{") - s.count("}")
+    open_brackets = s.count("[") - s.count("]")
+    if s and s[-1] not in ('"', '}', ']', ','):
+        s += '"'
+    s += "]" * max(open_brackets, 0)
+    s += "}" * max(open_braces, 0)
+    try:
+        return json.loads(s)
+    except json.JSONDecodeError:
+        return None
+
 _SYSTEM_PROMPT = """You are an expert ATS resume writer and career coach. Your job is to tailor a \
 candidate's resume to a specific job description to maximize their chances of passing Applicant \
 Tracking Systems (ATS) and impressing human reviewers.
@@ -185,7 +199,7 @@ def tailor_resume_gemini(
         config=types.GenerateContentConfig(
             system_instruction=_SYSTEM_PROMPT,
             temperature=temperature,
-            max_output_tokens=4096,
+            max_output_tokens=8192,
         ),
     )
 
@@ -196,4 +210,7 @@ def tailor_resume_gemini(
     try:
         return json.loads(raw)
     except json.JSONDecodeError as e:
+        repaired = _repair_truncated_json(raw)
+        if repaired:
+            return repaired
         raise ValueError(f"AI returned invalid JSON: {e}\n\nRaw output:\n{raw[:500]}")
