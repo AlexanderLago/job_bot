@@ -253,6 +253,42 @@ if "user_profile" not in st.session_state:
         "remote_pref":  "Any",
         "location":     "",
     }
+# ── Evaluate tab ──────────────────────────────────────────────────────────────
+if "eval_result" not in st.session_state:
+    st.session_state.eval_result = None
+if "eval_full_report" not in st.session_state:
+    st.session_state.eval_full_report = None
+if "eval_research" not in st.session_state:
+    st.session_state.eval_research = None
+if "eval_outreach" not in st.session_state:
+    st.session_state.eval_outreach = None
+if "pipeline_queue" not in st.session_state:
+    st.session_state.pipeline_queue = []
+if "story_bank" not in st.session_state:
+    st.session_state.story_bank = []
+# ── Interview Prep tab ────────────────────────────────────────────────────────
+if "prep_questions" not in st.session_state:
+    st.session_state.prep_questions = []
+if "prep_job" not in st.session_state:
+    st.session_state.prep_job = {}
+if "prep_chat" not in st.session_state:
+    st.session_state.prep_chat = []
+if "prep_active_q" not in st.session_state:
+    st.session_state.prep_active_q = None
+# ── Job Search tab ────────────────────────────────────────────────────────────
+if "job_search_results" not in st.session_state:
+    st.session_state.job_search_results = []
+if "job_search_total" not in st.session_state:
+    st.session_state.job_search_total = 0
+if "job_search_page" not in st.session_state:
+    st.session_state.job_search_page = 1
+if "job_search_params" not in st.session_state:
+    st.session_state.job_search_params = {}
+# ── Salary Estimator tab ──────────────────────────────────────────────────────
+if "salary_job_title" not in st.session_state:
+    st.session_state.salary_job_title = ""
+if "salary_result" not in st.session_state:
+    st.session_state.salary_result = None
 
 # ── Load persisted state from disk (runs once per session) ───────────────────
 if "fs_loaded" not in st.session_state:
@@ -291,6 +327,10 @@ if "fs_loaded" not in st.session_state:
         st.session_state.app_log = _saved.get("app_log", [])
     if not st.session_state.history:
         st.session_state.history = _saved.get("history_meta", [])
+    if not st.session_state.story_bank:
+        st.session_state.story_bank = _saved.get("story_bank", [])
+    if not st.session_state.pipeline_queue:
+        st.session_state.pipeline_queue = _saved.get("pipeline_queue", [])
     _saved_profile = _saved.get("user_profile", {})
     if _saved_profile:
         st.session_state.user_profile.update(_saved_profile)
