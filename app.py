@@ -14,6 +14,7 @@ from utils.ai_providers import PROVIDERS, call_tailor, call_score, ProviderRateL
 from utils.docx_builder import build_docx
 from utils.pdf_builder import build_pdf
 from utils.job_scraper import scrape_job_url
+from utils.evaluator import evaluate_job, ARCHETYPES, DIMENSIONS
 import sqlite3 as _sqlite3
 
 # ── Disk persistence helpers ──────────────────────────────────────────────────
@@ -964,7 +965,10 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ── Tabs ──────────────────────────────────────────────────────────────────────
-tab_tailor, tab_linkedin = st.tabs(["✨ Tailor", "🔗 LinkedIn Jobs"])
+tab_tailor, tab_eval, tab_history, tab_log, tab_prep, tab_search, tab_salary = st.tabs([
+    "✨ Tailor", "🎯 Evaluate", "📁 History", "📋 Application Log",
+    "🎤 Interview Prep", "🔍 Job Search", "💰 Salary Estimator",
+])
 
 
 # ══════════════════════════════════════════════════════════════════════════════
