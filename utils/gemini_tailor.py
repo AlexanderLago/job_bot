@@ -5,7 +5,7 @@ import re
 from google import genai
 from google.genai import types
 
-_MODEL = "gemini-3-flash-preview"
+_MODEL = "gemini-2.5-flash-lite"
 
 
 def _repair_truncated_json(raw: str) -> dict | None:

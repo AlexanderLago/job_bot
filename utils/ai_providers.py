@@ -8,16 +8,17 @@ import re
 # All entries with type="oai" use the OpenAI-compatible chat completions API.
 PROVIDERS = [
     {
-        "id": "anthropic",
-        "label": "Claude 3.5 Sonnet",
-        "key_name": "ANTHROPIC_API_KEY",
-        "type": "anthropic",
-        "free": False,
-        "signup_url": "https://console.anthropic.com/",
+        "id": "openclaw",
+        "label": "Claude Sonnet 4.6 · OpenClaw (Claude Pro)",
+        "key_name": None,           # no API key — uses Claude Code CLI OAuth
+        "type": "openclaw",
+        "model": "claude-sonnet-4-6",
+        "free": True,
+        "signup_url": None,
     },
     {
         "id": "gemini",
-        "label": "Gemini 3 Flash Preview",
+        "label": "Gemini 2.5 Flash Lite",
         "key_name": "GEMINI_API_KEY",
         "type": "gemini",
         "free": True,
@@ -44,6 +45,16 @@ PROVIDERS = [
         "signup_url": "https://console.groq.com/keys",
     },
     {
+        "id": "groq2",
+        "label": "GPT-OSS 120B · Groq",
+        "key_name": "GROQ_API_KEY",          # same key, separate rate-limit pool
+        "type": "oai",
+        "base_url": "https://api.groq.com/openai/v1",
+        "model": "openai/gpt-oss-120b",
+        "free": True,
+        "signup_url": "https://console.groq.com/keys",
+    },
+    {
         "id": "cerebras",
         "label": "GPT-OSS 120B · Cerebras",
         "key_name": "CEREBRAS_API_KEY",
@@ -52,16 +63,6 @@ PROVIDERS = [
         "model": "gpt-oss-120b",
         "free": True,
         "signup_url": "https://inference.cerebras.ai/",
-    },
-    {
-        "id": "sambanova",
-        "label": "Llama 3.3 70B · SambaNova",
-        "key_name": "SAMBANOVA_API_KEY",
-        "type": "oai",
-        "base_url": "https://api.sambanova.ai/v1",
-        "model": "Meta-Llama-3.3-70B-Instruct",
-        "free": True,
-        "signup_url": "https://cloud.sambanova.ai/",
     },
     {
         "id": "openrouter",
@@ -87,37 +88,38 @@ PROVIDERS = [
     # ── Extra OpenRouter slots — same key, different model = separate rate limit pool ──
     {
         "id": "openrouter2",
-        "label": "Gemma 3 27B · OpenRouter",
+        "label": "Gemma 4 31B · OpenRouter",
         "key_name": "OPENROUTER_API_KEY",
         "type": "oai",
         "base_url": "https://openrouter.ai/api/v1",
-        "model": "google/gemma-3-27b-it:free",
+        "model": "google/gemma-4-31b-it:free",
         "free": True,
         "signup_url": "https://openrouter.ai/keys",
         "extra_headers": {"HTTP-Referer": "https://github.com/AlexanderLago/job_bot", "X-Title": "Job Bot"},
     },
     {
         "id": "openrouter3",
-        "label": "Mistral 7B · OpenRouter",
+        "label": "Nemotron 120B · OpenRouter",
         "key_name": "OPENROUTER_API_KEY",
         "type": "oai",
         "base_url": "https://openrouter.ai/api/v1",
-        "model": "mistralai/mistral-7b-instruct:free",
+        "model": "nvidia/nemotron-3-super-120b-a12b:free",
         "free": True,
         "signup_url": "https://openrouter.ai/keys",
         "extra_headers": {"HTTP-Referer": "https://github.com/AlexanderLago/job_bot", "X-Title": "Job Bot"},
     },
-    # ── Additional free-tier providers ────────────────────────────────────────
     {
-        "id": "together",
-        "label": "Llama 3.3 70B · Together AI",
-        "key_name": "TOGETHER_API_KEY",
+        "id": "openrouter4",
+        "label": "Kimi K2.6 · OpenRouter",
+        "key_name": "OPENROUTER_API_KEY",    # same key, separate rate-limit pool
         "type": "oai",
-        "base_url": "https://api.together.xyz/v1",
-        "model": "meta-llama/Llama-3.3-70B-Instruct-Turbo-Free",
+        "base_url": "https://openrouter.ai/api/v1",
+        "model": "moonshotai/kimi-k2.6:free",
         "free": True,
-        "signup_url": "https://api.together.xyz/",
+        "signup_url": "https://openrouter.ai/keys",
+        "extra_headers": {"HTTP-Referer": "https://github.com/AlexanderLago/job_bot", "X-Title": "Job Bot"},
     },
+    # ── Additional free-tier providers (no key configured yet — signup links shown in UI) ──
     {
         "id": "mistral",
         "label": "Mistral Nemo · Mistral AI",
@@ -127,36 +129,6 @@ PROVIDERS = [
         "model": "open-mistral-nemo",
         "free": True,
         "signup_url": "https://console.mistral.ai/",
-    },
-    {
-        "id": "fireworks",
-        "label": "Llama 3.1 70B · Fireworks AI",
-        "key_name": "FIREWORKS_API_KEY",
-        "type": "oai",
-        "base_url": "https://api.fireworks.ai/inference/v1",
-        "model": "accounts/fireworks/models/llama-v3p1-70b-instruct",
-        "free": True,
-        "signup_url": "https://fireworks.ai/",
-    },
-    {
-        "id": "deepinfra",
-        "label": "Llama 3.1 70B · DeepInfra",
-        "key_name": "DEEPINFRA_API_KEY",
-        "type": "oai",
-        "base_url": "https://api.deepinfra.com/v1/openai",
-        "model": "meta-llama/Meta-Llama-3.1-70B-Instruct",
-        "free": True,
-        "signup_url": "https://deepinfra.com/",
-    },
-    {
-        "id": "hyperbolic",
-        "label": "Llama 3.1 70B · Hyperbolic",
-        "key_name": "HYPERBOLIC_API_KEY",
-        "type": "oai",
-        "base_url": "https://api.hyperbolic.xyz/v1",
-        "model": "meta-llama/Meta-Llama-3.1-70B-Instruct",
-        "free": True,
-        "signup_url": "https://app.hyperbolic.xyz/",
     },
     {
         "id": "nvidia",
@@ -260,10 +232,68 @@ def _should_skip(exc: Exception) -> bool:
         "429", "rate_limit", "rate limit", "resource_exhausted", "quota",   # rate limits
         "503", "unavailable", "high demand", "service unavailable",         # overload / Gemini 503
         "404", "not found", "not_found", "no such model", "does not exist", # bad model/endpoint
-        "401", "403", "unauthorized", "invalid api key", "invalid_api_key", # auth failures
+        "401", "402", "403", "unauthorized", "invalid api key", "invalid_api_key", "payment",  # auth / billing
         "authentication", "forbidden", "permission denied",
         "timeout", "timed out", "connecttimeout", "connection error",       # network failures
     ))
+
+
+def _call_openclaw(system: str, user: str, model: str = "claude-sonnet-4-6") -> str:
+    """Call Claude via the OpenClaw CLI (uses Claude Pro OAuth — no API key needed).
+
+    Writes the prompt to a temp file and invokes openclaw through PowerShell so
+    multi-line content with special characters passes cleanly without cmd.exe
+    quoting/redirection issues.
+    """
+    import os
+    import subprocess
+
+    full_prompt = f"<system>\n{system}\n</system>\n\n{user}"
+
+    # Call node.exe → openclaw.mjs directly (matches what openclaw.cmd does but
+    # bypasses cmd.exe so multi-line prompt args pass through CreateProcess cleanly).
+    node_exe     = r"C:\Program Files\nodejs\node.exe"
+    openclaw_mjs = r"C:\Users\alexa\AppData\Roaming\npm\node_modules\openclaw\openclaw.mjs"
+
+    result = subprocess.run(
+        [node_exe, openclaw_mjs,
+         "capability", "model", "run",
+         "--prompt", full_prompt,
+         "--model", f"anthropic/{model}",
+         "--json"],
+        capture_output=True,
+        text=True,
+        timeout=300,          # node.js startup + Claude round-trip can be slow
+        env={**os.environ},
+    )
+
+    if result.returncode != 0:
+        raise ProviderRateLimitError(
+            f"openclaw exited {result.returncode}: {(result.stderr or result.stdout)[:400]}"
+        )
+
+    # openclaw --json outputs a JSON object; plain-text mode adds a header line first
+    stdout = result.stdout.strip()
+    # Find the first '{' to skip any leading header lines
+    brace = stdout.find("{")
+    if brace > 0:
+        stdout = stdout[brace:]
+
+    try:
+        data = json.loads(stdout)
+    except json.JSONDecodeError as e:
+        raise ProviderRateLimitError(
+            f"openclaw returned non-JSON output: {stdout[:400]}"
+        ) from e
+
+    if not data.get("ok"):
+        raise ProviderRateLimitError(f"openclaw call failed: {data}")
+
+    outputs = data.get("outputs", [])
+    if not outputs or not outputs[0].get("text"):
+        raise ProviderRateLimitError("openclaw returned empty output")
+
+    return outputs[0]["text"]
 
 
 def _call_oai(base_url: str, api_key: str, model: str, system: str, user: str,
@@ -300,6 +330,22 @@ def call_tailor(provider: dict, api_key: str, resume_text: str, jd: str, tempera
                 preserve_structure: bool = False) -> dict:
     """Tailor the resume using the given provider. Raises ProviderRateLimitError on 429."""
     t = provider["type"]
+
+    if t == "openclaw":
+        from utils.ai_tailor import SYSTEM_PROMPT
+        try:
+            raw = _call_openclaw(
+                system=SYSTEM_PROMPT,
+                user=_tailor_user_msg(resume_text, jd, temperature, preserve_structure),
+                model=provider.get("model", "claude-sonnet-4-6"),
+            )
+            return _parse_json(raw)
+        except ProviderRateLimitError:
+            raise
+        except Exception as e:
+            if _should_skip(e):
+                raise ProviderRateLimitError(str(e))
+            raise
 
     if t == "anthropic":
         from utils.ai_tailor import tailor_resume
@@ -339,6 +385,22 @@ def call_tailor(provider: dict, api_key: str, resume_text: str, jd: str, tempera
 def call_score(provider: dict, api_key: str, resume_text: str, jd: str) -> dict:
     """Score the resume using the given provider. Raises ProviderRateLimitError on 429."""
     t = provider["type"]
+
+    if t == "openclaw":
+        from utils.scorer import _SYSTEM_PROMPT
+        try:
+            raw = _call_openclaw(
+                system=_SYSTEM_PROMPT,
+                user=_score_user_msg(resume_text, jd),
+                model=provider.get("model", "claude-sonnet-4-6"),
+            )
+            return _parse_json(raw)
+        except ProviderRateLimitError:
+            raise
+        except Exception as e:
+            if _should_skip(e):
+                raise ProviderRateLimitError(str(e))
+            raise
 
     if t == "anthropic":
         from utils.scorer import score_resume

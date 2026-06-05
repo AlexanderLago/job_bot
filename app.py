@@ -14,13 +14,7 @@ from utils.ai_providers import PROVIDERS, call_tailor, call_score, ProviderRateL
 from utils.docx_builder import build_docx
 from utils.pdf_builder import build_pdf
 from utils.job_scraper import scrape_job_url
-from utils.log_builder import build_log_docx, build_log_csv
-from utils.interview_prep import search_interview_content, generate_questions, rate_answer
-from utils.job_search import search_jobs, generate_search_keywords, _COUNTRY_LABELS
-from utils.salary_estimator import extract_salary_from_jd, search_salary_data, estimate_salary
-from utils.evaluator import evaluate_job, generate_full_report, ARCHETYPES, DIMENSIONS
-from utils.company_research import research_company
-from utils.outreach import generate_linkedin_message
+import sqlite3 as _sqlite3
 
 # ── Disk persistence helpers ──────────────────────────────────────────────────
 _SAVE_DIR  = Path.home() / ".job_bot"
@@ -245,40 +239,12 @@ if "rl_until" not in st.session_state:
     st.session_state.rl_until = {}          # {provider_id: epoch float when cooldown expires}
 if "result_cache" not in st.session_state:
     st.session_state.result_cache = {}      # {cache_key: result dict}
-if "prep_questions" not in st.session_state:
-    st.session_state.prep_questions = []
-if "prep_chat" not in st.session_state:
-    st.session_state.prep_chat = []
-if "prep_job" not in st.session_state:
-    st.session_state.prep_job = {"company": "", "role": ""}
-if "prep_active_q" not in st.session_state:
-    st.session_state.prep_active_q = None
 if "mark_applied_open" not in st.session_state:
     st.session_state.mark_applied_open = False
-if "job_search_results" not in st.session_state:
-    st.session_state.job_search_results = []
-if "job_search_page" not in st.session_state:
-    st.session_state.job_search_page = 1
-if "job_search_params" not in st.session_state:
-    st.session_state.job_search_params = {}
-if "job_search_total" not in st.session_state:
-    st.session_state.job_search_total = 0
-if "salary_result" not in st.session_state:
-    st.session_state.salary_result = None
-if "salary_job_title" not in st.session_state:
-    st.session_state.salary_job_title = ""
-if "eval_result" not in st.session_state:
-    st.session_state.eval_result = None
-if "eval_full_report" not in st.session_state:
-    st.session_state.eval_full_report = None
-if "eval_research" not in st.session_state:
-    st.session_state.eval_research = None
-if "eval_outreach" not in st.session_state:
-    st.session_state.eval_outreach = None
-if "pipeline_queue" not in st.session_state:
-    st.session_state.pipeline_queue = []
-if "story_bank" not in st.session_state:
-    st.session_state.story_bank = []  # [{prompt, situation, task, action, result, reflection, tags, added}]
+if "li_jobs" not in st.session_state:
+    st.session_state.li_jobs = None      # list[dict] loaded from linkedin_matcher DB
+if "li_tailored" not in st.session_state:
+    st.session_state.li_tailored = {}    # {job_id: resume_dict}
 if "user_profile" not in st.session_state:
     st.session_state.user_profile = {
         "target_roles": [],
@@ -324,10 +290,6 @@ if "fs_loaded" not in st.session_state:
         st.session_state.app_log = _saved.get("app_log", [])
     if not st.session_state.history:
         st.session_state.history = _saved.get("history_meta", [])
-    if not st.session_state.pipeline_queue:
-        st.session_state.pipeline_queue = _saved.get("pipeline_queue", [])
-    if not st.session_state.story_bank:
-        st.session_state.story_bank = _saved.get("story_bank", [])
     _saved_profile = _saved.get("user_profile", {})
     if _saved_profile:
         st.session_state.user_profile.update(_saved_profile)
@@ -618,6 +580,34 @@ def _score_label(score: int) -> str:
     return "Poor match"
 
 
+# ── LinkedIn Jobs DB helper ───────────────────────────────────────────────────
+_LI_DB = Path(__file__).parent / "linkedin_matcher" / "data" / "jobs.db"
+
+def _load_li_jobs(limit: int = 50) -> list[dict]:
+    """Load top jobs from the linkedin_matcher SQLite DB, ordered by composite_score DESC."""
+    if not _LI_DB.exists():
+        return []
+    try:
+        con = _sqlite3.connect(str(_LI_DB))
+        con.row_factory = _sqlite3.Row
+        cur = con.execute(
+            """
+            SELECT job_id, title, company, location, seniority, composite_score,
+                   semantic_score, keyword_score, ai_grade, ai_score, ai_keywords,
+                   description, job_url, first_seen_at
+            FROM jobs
+            ORDER BY composite_score DESC
+            LIMIT ?
+            """,
+            (limit,),
+        )
+        rows = [dict(r) for r in cur.fetchall()]
+        con.close()
+        return rows
+    except Exception:
+        return []
+
+
 # ── Sidebar ───────────────────────────────────────────────────────────────────
 with st.sidebar:
     st.markdown("## ⚙️ Settings")
@@ -860,7 +850,7 @@ with st.sidebar:
 
     # ── Career Profile ─────────────────────────────────────────────────────────
     with st.expander("🎯 Career Profile", expanded=False):
-        st.caption("Used by the Evaluate tab to score job fit against your goals.")
+        st.caption("Used for AI scoring of LinkedIn job matches.")
         _prof = st.session_state.user_profile
         _roles_raw = st.text_input(
             "Target roles (comma-separated)",
@@ -910,8 +900,8 @@ with st.sidebar:
         st.session_state.master_resume_bytes = b""
         st.session_state.app_log      = []
         st.session_state.history      = []
-        st.session_state.pipeline_queue = []
-        st.session_state.story_bank    = []
+        st.session_state.li_jobs      = None
+        st.session_state.li_tailored  = {}
         st.session_state.user_profile = {"target_roles": [], "min_salary": 0, "remote_pref": "Any", "location": ""}
         st.success("All saved data cleared.")
 
@@ -974,10 +964,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ── Tabs ──────────────────────────────────────────────────────────────────────
-tab_tailor, tab_eval, tab_history, tab_log, tab_prep, tab_search, tab_salary = st.tabs([
-    "✨ Tailor", "🎯 Evaluate", "📁 History", "📋 Application Log",
-    "🎤 Interview Prep", "🔍 Job Search", "💰 Salary Estimator",
-])
+tab_tailor, tab_linkedin = st.tabs(["✨ Tailor", "🔗 LinkedIn Jobs"])
 
 
 # ══════════════════════════════════════════════════════════════════════════════
